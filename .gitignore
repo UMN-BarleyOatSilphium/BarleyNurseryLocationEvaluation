@@ -1,4 +1,6 @@
-/Scripts/pedtools/*
+Scripts/pedtools/*
 BarleyNurseryAnalysis.Rproj
 README.Rmd
-/.Rproj.user/*
+.Rproj.user/*
+Figures/*
+Results/*

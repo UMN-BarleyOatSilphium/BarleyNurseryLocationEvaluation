@@ -15,7 +15,7 @@ packages <- c("tidyverse", "readxl", "lubridate", "measurements")
 invisible(lapply(packages, library, character.only = TRUE))
 
 ## Source a script for relevant functions
-source(file.path(getwd(), "source_functions.R"))
+source(file.path(getwd(), "functions.R"))
 
 ## Use my package for adding spaces to strings
 library(neyhart)

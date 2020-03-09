@@ -19,7 +19,7 @@ packages <- c("tidyverse", "readxl", "lubridate", "measurements")
 invisible(lapply(packages, library, character.only = TRUE))
 
 ## Source a script for relevant functions
-source(file.path(getwd(), "source_functions.R"))
+source(file.path(getwd(), "functions.R"))
 
 ## Use my package for adding spaces to strings
 library(neyhart)
@@ -547,7 +547,7 @@ hist(plant_height_edit$value)
 ## Reassemble the data.frame
 nursery_trait_data3 <- nursery_trait_data2 %>%
   filter(! trait %in% traits_bad_units) %>%
-  bind_rows(., grain_yield_edit, heading_date_edit, maturity_date_edit, test_weight_edit)
+  bind_rows(., grain_yield_edit, heading_date_edit, maturity_date_edit, test_weight_edit, plant_height_edit)
 
 ## Find duplicates
 nursery_trait_data3_dups <- nursery_trait_data3 %>%
