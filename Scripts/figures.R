@@ -11,6 +11,13 @@
 proj_dir <- getwd()
 source(file.path(proj_dir, "startup.R"))
 
+file.path(result_dir, "gge_model_fit.RData")
+
+
+
+#######################
+# Map of locations
+#######################
 
 
 
@@ -60,6 +67,36 @@ g_map <- ggplot(data = north_america, aes(x = long, y = lat)) +
 # Save the figure
 ggsave(filename = "trial_location_map.jpg", plot = g_map, path = fig_dir,
        width = 8, height = 5, dpi = 1000)
+
+
+
+
+
+
+
+
+
+
+#######################
+# GGE biplot analysis
+#######################
+
+
+## Determine mega-environments by looking at the winning genotypes per environment
+gge_me <- ggeN_fit %>%
+  unnest(y_hat) %>%
+  # Rank genotypes by environment
+  group_by(trait, environment) %>%
+  mutate(rank = row_number(y_hat))
+
+
+
+
+
+
+
+
+
 
 
 

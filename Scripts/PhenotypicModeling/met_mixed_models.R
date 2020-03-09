@@ -33,8 +33,7 @@ library(nlme)
 
 
 ## Subset more relevant traits
-traits_tokeep <- c("BetaGlucan", "DiastaticPower", "GrainProtein", "MaltExtract", "GrainYield",
-                   "HeadingDate", "PlantHeight")
+traits_tokeep <- c("GrainProtein", "MaltExtract", "GrainYield", "HeadingDate", "PlantHeight")
 
 
 
@@ -136,8 +135,7 @@ for (i in seq_len(nrow(pheno_to_model))) {
 
 ## Unnest matrix
 met_mm_out <- pheno_to_model %>%
-  select(-data) %>% 
-  unnest(out)
+  select(-data)
 
 # Save
 save("met_mm_out", file = file.path(result_dir, "met_mixed_model_output.RData"))
