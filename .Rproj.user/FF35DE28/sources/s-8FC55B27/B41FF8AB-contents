@@ -1,0 +1,168 @@
+## Barley Nursery Analysis
+## 
+## Analyze MET from barley nursery
+## 
+## Author: Jeff Neyhart
+## Last modified: 26 Feb. 2020
+## 
+
+
+
+# Base script
+proj_dir <- getwd()
+source(file.path(proj_dir, "source.R"))
+
+# Additional packages
+library(GGally)
+library(Bilinear)
+
+
+
+
+
+#######################
+# Load data
+#######################
+
+load(file.path(result_dir, "met_mixed_model_output_example.RData"))
+
+
+
+#######################
+# Summarize error
+#######################
+
+## Summarize error variance by locations
+met_var_comp <- met_mm_out_example %>% 
+  unnest(var_comp) %>%
+  filter(str_detect(component, "units")) %>%
+  rename(environment = component) %>%
+  mutate(environment = str_remove_all(environment, ":units"))
+
+# Bind with trial metadata
+met_var_comp1 <- met_var_comp %>%
+  left_join(trial_metadata) %>%
+  filter(variance != 0) %>%
+  mutate(sdev = sqrt(variance))
+
+## Number of observations per location/trait
+met_var_comp_plot <- met_var_comp1 %>% 
+  group_by(trait, location) %>% 
+  summarize(nE = n_distinct(environment)) %>%
+  left_join(met_var_comp1, .)
+
+# Plot error variance by location and trait
+met_var_comp1 %>%
+  ggplot(aes(location, y = variance, fill = trait)) +
+  geom_boxplot(position = "dodge") +
+  facet_grid(trait ~ ., scales = "free_y") +
+  theme_light()
+
+
+# Fit a model where error is response
+var_fit <- lm(sdev ~ location, data = met_var_comp_plot, 
+              subset = trait == "GrainYield")
+
+
+
+# Plot trait1 variance vs trait2 variance
+met_var_comp1_plot <- met_var_comp1 %>%
+  select(environment, location, trait, sdev) %>%
+  spread(trait, sdev)
+
+met_var_comp1_plot %>% 
+  ggpairs(data = ., aes(color = location),
+          columns = {setdiff(x = seq_len(ncol(.)), y = c(1,2))},
+          lower = list(continuous = "smooth")) +
+  theme_light()
+
+
+
+
+
+
+#######################
+# Model phenotypes
+#######################
+
+
+## Unnest the phenotypic data
+pheno_blup <- met_mm_out_example %>%
+  unnest(pred_pheno) %>%
+  filter_at(vars(contains("nonzero")), all_vars(.))
+
+# Remove line names with any missing data
+pheno_blup_tomodel <- pheno_blup %>%
+  split(.$trait) %>%
+  map_df(~group_by(.x, line_name) %>% filter(n() == n_distinct(.x$environment))) %>%
+  ungroup() %>%
+  left_join(trial_metadata)
+
+## Convert to list of GE tables
+pheno_blup_ge_list <- pheno_blup_tomodel %>%
+  select(trait, environment, line_name, ppv) %>%
+  as.data.frame() %>%
+  split(.$trait) %>%
+  map(~select(., -trait) %>% spread(environment, ppv) %>% column_to_rownames("line_name")  %>% as.matrix())
+
+
+## Fit an AMMI model per trait ##
+
+
+
+ammi_fit <- bilinear(x = subset(pheno_blup_tomodel, trait == "GrainYield"), G = "line_name", E = "environment",
+                     y = "ppv", test = "bootstrap", B = 2)
+
+# Plot
+AMMIplot(bilinearObject = ammi_fit)
+
+BBplot(bilinearObject = ammi_fit, Gnames = FALSE, nPC = 2, decorateGGE = T)
+
+
+
+## Calculate the correlation between environments at a location
+location_gen_cor <- pheno_blup_tomodel %>%
+  group_by(trait, location) %>%
+  filter(n_distinct(environment) > 1) %>%
+  do(loc_cor_out = {
+    df <- .
+    select(df, line_name, environment, ppv) %>% 
+      spread(environment, ppv) %>% 
+      as.data.frame() %>% 
+      column_to_rownames("line_name") %>% 
+      cor() %>% 
+      as.dist() %>%
+      tidy() %>% 
+      rename_all(~c("environment1", "environment2", "corr"))
+  }) %>%
+  ungroup() %>%
+  mutate(mean_corr = map_dbl(loc_cor_out, ~mean(.$corr)))
+
+## Calculate correlations based on phenotypic data
+location_gen_cor_pheno <- inner_join(pheno_dat, distinct(pheno_blup_tomodel, trait, trial, line_name)) %>%
+  group_by(trait, line_name, location, environment) %>%
+  summarize_at(vars(value), mean) %>%
+  group_by(trait, location) %>%
+  filter(n_distinct(environment) > 1) %>%
+  do(loc_cor_out = {
+    df <- .
+    select(df, line_name, environment, value) %>% 
+      spread(environment, value) %>% 
+      as.data.frame() %>% 
+      column_to_rownames("line_name") %>% 
+      cor(use = "pairwise.complete.obs") %>% 
+      as.dist() %>%
+      tidy() %>% 
+      rename_all(~c("environment1", "environment2", "corr"))
+  }) %>%
+  ungroup() %>%
+  mutate(mean_corr = map_dbl(loc_cor_out, ~mean(.$corr)))
+  
+
+
+
+
+
+
+
+

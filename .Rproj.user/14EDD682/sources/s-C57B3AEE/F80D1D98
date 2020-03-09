@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1583707020071.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "F80D1D98",
+    "lastKnownWriteTime" : 1583534897,
+    "last_content_update" : 1583534897,
+    "path" : "C:/GoogleDrive/Projects/BarleyNurseryAnalysis/Scripts/PhenotypicModeling/met_mixed_models.R",
+    "project_path" : "Scripts/PhenotypicModeling/met_mixed_models.R",
+    "properties" : {
+        "cursorPosition" : "26,0",
+        "scrollLine" : "14"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 2,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1583770847356.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "8D97C7E3",
+    "lastKnownWriteTime" : 1583771126,
+    "last_content_update" : 1583771126766,
+    "path" : "C:/GoogleDrive/Projects/BarleyNurseryAnalysis/Scripts/PhenotypicModeling/run_phenotype_analysis.sh",
+    "project_path" : "Scripts/PhenotypicModeling/run_phenotype_analysis.sh",
+    "properties" : {
+        "cursorPosition" : "11,19",
+        "scrollLine" : "0"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 6,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "sh"
+}

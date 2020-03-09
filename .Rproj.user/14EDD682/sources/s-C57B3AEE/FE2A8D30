@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1583706927594.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "FE2A8D30",
+    "lastKnownWriteTime" : 1583770836,
+    "last_content_update" : 1583770836252,
+    "path" : "C:/GoogleDrive/Projects/BarleyNurseryAnalysis/Scripts/PhenotypicModeling/analyze_met_blups.R",
+    "project_path" : "Scripts/PhenotypicModeling/analyze_met_blups.R",
+    "properties" : {
+        "cursorPosition" : "136,0",
+        "scrollLine" : "0"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

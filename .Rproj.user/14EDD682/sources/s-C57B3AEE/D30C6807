@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1583771049009.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "D30C6807",
+    "lastKnownWriteTime" : 1583161078,
+    "last_content_update" : 1583161078,
+    "path" : "C:/GoogleDrive/Projects/BarleyNurseryAnalysis/startup_MSI.R",
+    "project_path" : "startup_MSI.R",
+    "properties" : {
+        "cursorPosition" : "30,0",
+        "scrollLine" : "0"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 7,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}
