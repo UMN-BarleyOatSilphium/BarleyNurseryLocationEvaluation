@@ -1,0 +1,102 @@
+Loading required package: Matrix
+Loading required package: MASS
+Loading required package: lattice
+Loading required package: crayon
+
+Attaching package: ‘dplyr’
+
+The following object is masked from ‘package:MASS’:
+
+    select
+
+The following objects are masked from ‘package:stats’:
+
+    filter, lag
+
+The following objects are masked from ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+
+Attaching package: ‘tidyr’
+
+The following objects are masked from ‘package:Matrix’:
+
+    expand, pack, unpack
+
+
+Attaching package: ‘rrBLUP’
+
+The following objects are masked from ‘package:sommer’:
+
+    A.mat, GWAS
+
+Parsed with column specification:
+cols(
+  trial = col_character(),
+  location = col_character(),
+  year = col_double(),
+  environment = col_character(),
+  nursery = col_character(),
+  management = col_character(),
+  planting_date = col_character(),
+  harvest_date = col_character(),
+  state = col_character(),
+  mgmt = col_character(),
+  lat = col_double(),
+  long = col_double()
+)
+Parsed with column specification:
+cols(
+  line_name = col_character(),
+  alias = col_character(),
+  pedigree = col_character(),
+  aliases = col_character(),
+  row_type = col_double(),
+  end_use = col_character()
+)
+Loading required package: lme4
+
+Attaching package: ‘lmerTest’
+
+The following object is masked from ‘package:lme4’:
+
+    lmer
+
+The following object is masked from ‘package:stats’:
+
+    step
+
+
+Attaching package: ‘broom’
+
+The following object is masked from ‘package:neyhart’:
+
+    bootstrap
+
+
+Attaching package: ‘modelr’
+
+The following object is masked from ‘package:broom’:
+
+    bootstrap
+
+The following object is masked from ‘package:neyhart’:
+
+    bootstrap
+
+
+Attaching package: ‘nlme’
+
+The following object is masked from ‘package:lme4’:
+
+    lmList
+
+The following object is masked from ‘package:dplyr’:
+
+    collapse
+
+Joining, by = "environment"
+Warning message:
+Column `environment` joining factor and character vector, coercing into character vector 
+/var/spool/torque/mom_priv/jobs/19994663.mesabim1.msi.umn.edu.SC: line 20: 24674 Killed                  Rscript met_mixed_models.R
