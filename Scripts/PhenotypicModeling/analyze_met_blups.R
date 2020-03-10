@@ -135,8 +135,9 @@ met_var_comp_plot <- met_var_comp1 %>%
 # Plot error variance by location and trait
 g_met_varR <- met_var_comp1 %>%
   ggplot(aes(location, y = variance, fill = trait)) +
-  geom_boxplot(position = "dodge") +
-  facet_grid(trait ~ ., scales = "free_y") +
+  geom_jitter(aes(color = trait), width = 0.25) +
+  geom_boxplot(width = 0.5, alpha = 0.5) +
+  facet_grid(trait ~ ., scales = "free_y", switch = "y") +
   theme_light()
 
 # Save
@@ -163,16 +164,20 @@ pheno_blup_tomodel <- pheno_blup %>%
 ## Fit a GGE model per trait ##
 bilinear_fit <- pheno_blup_tomodel %>%
   group_by(trait) %>%
-  do(fit = {
+  do({
     df <- .
     df1 <- droplevels(df)
     
     # Fit the model
-    fit <- bilinear(x = df1, G = "line_name", E = "environment", y = "ppv", test = "bootstrap", B = 1, 
+    ammi <- bilinear(x = df1, G = "line_name", E = "environment", y = "ppv", test = "bootstrap", B = 1, 
                     model = "AMMI")
+
+    # Fit the GGE model
+    gge <- bilinear(x = df1, G = "line_name", E = "environment", y = "ppv", test = "bootstrap", B = 1, 
+                    model = "GGE")
     
-    ## Return the fit
-    fit[c("model", "mu", "Eeffect", "Geffect", "scores", "svdE", "ANOVA")]
+    # return both
+    tibble(model = c("ammi", "gge"), fit = list(ammi, gge))
     
   }) %>% ungroup()
 
@@ -195,7 +200,7 @@ bilinear_scores %>%
   # Plot
   ggplot(aes(x = PC_num, y = propvar_SS)) +
   geom_point() + 
-  facet_wrap(~ trait, scales = "free_x")
+  facet_wrap(model ~ trait, scales = "free_x")
 
 ## Determine significant PCs using "elbow" method
 # Tolerance for difference in variance explained
@@ -206,25 +211,24 @@ bilinear_sig_PCs <- bilinear_scores %>%
   #
   mutate(propvar = propvar_SS) %>%
   #
-  arrange(trait, PC_num) %>%
-  split(.$trait) %>% 
-  ## Calculate the difference between steps of adding PCs. Find the first step when the difference is
-  ## below the tolerance threshold
-  map_df(~mutate(., propvar_diff = c(abs(diff(propvar)), 0), 
-                 stop = which.min(propvar_diff >= tol), 
-                 nPC = stop - 1))
+  arrange(trait, model, PC_num) %>%
+  group_by(trait, model) %>%
+  do({
+    mutate(., propvar_diff = c(abs(diff(propvar)), 0), stop = which.min(propvar_diff >= tol), 
+           nPC = stop - 1)
+  }) %>% ungroup()
 
 ## Summary df of number of sig PCs
 bilinear_sig_PCs_summ <- bilinear_sig_PCs %>%
-  group_by(trait) %>%
+  group_by(trait, model) %>%
   filter(PC_num %in% seq(1, unique(nPC))) %>%
   summarize(total_propvar = sum(propvar), nPC = unique(nPC))
 
 
 ## Fit a model for that number of PCS
 bilinear_fitN_fit <- bilinear_fit %>%
-  left_join(., bilinear_sig_PCs_summ, by = "trait") %>%
-  group_by(trait) %>%
+  left_join(., bilinear_sig_PCs_summ) %>%
+  group_by(trait, model) %>%
   do({
     
     row <- .
@@ -237,6 +241,7 @@ bilinear_fitN_fit <- bilinear_fit %>%
       tibble(line_name = names(.), effect = .)
     e_effects <- fitted$Eeffect %>%
       tibble(environment = names(.), effect = .)
+    
     
     # Get the environmental and genotypic scores
     g_scores <- fitted$scores$Gscores
@@ -287,8 +292,9 @@ trait_dir_df <- tribble(
 bilinear_ranks <- bilinear_fitN_fit %>%
   unnest(y_hat) %>%
   left_join(., trait_dir_df) %>%
-  split(.$trait) %>%
-  map_df(~{
+  group_by(trait, model) %>%
+  do({
+    .x <- .
     
     # Rank genotypes by environment
     if (unique(.x$dir) == "high") {
@@ -301,18 +307,21 @@ bilinear_ranks <- bilinear_fitN_fit %>%
         mutate(rank = row_number(y_hat))
       
     } 
+    
   }) %>% ungroup()
+
 
 ## Assign mega-environments
 bilinear_me <- bilinear_ranks %>% 
-  split(.$trait) %>% 
-  map_df(~group_by(.x, environment) %>% 
-           filter(rank == min(rank)) %>% 
-           ungroup() %>%
-           mutate(me = as.numeric(as.factor(line_name)))) %>%
+  group_by(trait, model) %>%
+  do({
+    group_by(., environment) %>% 
+      filter(rank == min(rank)) %>% 
+      ungroup() %>%
+      mutate(me = as.numeric(as.factor(line_name)))
+  }) %>%
+  ungroup() %>%
   select(-mu, -y_hat, -dir, -rank)
-
-
 
 
 ## Save the model output
@@ -373,8 +382,10 @@ location_adj_year_cor_summ <- location_adj_year_cor %>%
 location_adj_year_cor %>%
   ggplot(aes(x = location, y = corr)) +
   geom_jitter(width = 0.25) +
-  geom_boxplot(alpha = 0.5) +
-  facet_grid(~ trait)
+  geom_boxplot(alpha = 0.5, fill = "grey85", width = 0.5) +
+  facet_grid(~ trait) +
+  theme_light()
+  
 
 
 
