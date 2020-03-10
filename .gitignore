@@ -1,7 +1,12 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
 Scripts/pedtools/*
+*.e[0-9]*
+*.o[0-9]*
 BarleyNurseryAnalysis.Rproj
 README.Rmd
 Figures/*
 Results/*
-.Rproj.user/*
-.Rproj.user
+
