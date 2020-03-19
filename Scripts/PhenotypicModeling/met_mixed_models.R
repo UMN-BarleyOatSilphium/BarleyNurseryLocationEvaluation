@@ -36,19 +36,36 @@ library(nlme)
 traits_tokeep <- c("GrainProtein", "MaltExtract", "GrainYield", "HeadingDate", "PlantHeight")
 
 
-
-## Convert the pedigree mat to A
-A <- as.matrix(pedigree_Amat[levels(pheno_dat$line_name), levels(pheno_dat$line_name)])
-
 ## Nest phenotypic data by trait, nursery, and management
-pheno_to_model <- pheno_dat %>%
+pheno_dat_subset <- pheno_dat %>%
   filter(trait %in% traits_tokeep) %>%
   select(-trial) %>%
   left_join(., select(trial_metadata, trial, environment, nursery, management)) %>%
-  mutate_at(vars(trial, line_name, environment), as.factor) %>%
+  mutate_at(vars(trial, line_name, environment), as.factor)
+
+
+## Apply some filters to the dataset
+## 1. locations must be observed in >= 5 years
+pheno_dat_subset1 <- pheno_dat_subset %>% 
+  group_by(trait, nursery, management, location) %>% 
+  filter(n_distinct(year1) >= 5) %>%
+  ungroup() %>%
+  droplevels()
+
+
+# Get a list of genotypes
+genotypes <- levels(pheno_dat_subset1$line_name)
+
+## Convert the pedigree mat to A
+A <- as.matrix(pedigree_Amat[genotypes, genotypes]); rm(pedigree_Amat)
+
+
+## Nest
+pheno_to_model <- pheno_dat_subset1 %>%
   group_by(trait, nursery, management) %>%
   nest() %>%
   mutate(out = list(NULL))
+
 
 ## Iterate over rows in this data.frame
 for (i in seq_len(nrow(pheno_to_model))) {
@@ -75,11 +92,43 @@ for (i in seq_len(nrow(pheno_to_model))) {
   AE <- as.matrix(kronecker(A_use, E, make.dimnames = TRUE))
   dimnames(AE) <- replicate(2, paste(rep(row.names(A_use), each = ncol(E)), row.names(E), sep = ":"), simplify = F)
   
-  # Fit the model
-  fit <- mmer(fixed = value ~ 1 + environment,
-              random = ~vs(line_name, Gu = A_use) + vs(line_name:environment, Gu = AE),
-              rcov = ~vs(ds(environment), units),
-              data = df1, date.warning = FALSE)
+  ### Fit the model ###
+  
+  ## Try to fit the model; capture the output
+  model_stdout <- capture.output({
+    
+    fit <- mmer(fixed = value ~ 1 + environment,
+                random = ~vs(line_name, Gu = A_use) + vs(line_name:environment, Gu = AE),
+                rcov = ~vs(ds(environment), units),
+                data = df1, 
+                date.warning = FALSE)
+    
+  })
+  
+  # If model fit is empty, try using a smaller number of iterations; for instance find
+  # the maximum logLik and use those iterations
+  itry <- 1
+  while (is_empty(model_fit) & itry == 1) {
+    
+    # Find the number of iterations that maximized the logLik
+    best_iter <- model_stdout %>% 
+      subset(., str_detect(., "singular", negate = T)) %>% 
+      read_table(.) %>%
+      subset(., LogLik == max(LogLik), iteration, drop = TRUE)
+    
+    # Refit
+    fit <- mmer(fixed = value ~ 1 + environment,
+                random = ~vs(line_name, Gu = A_use) + vs(line_name:environment, Gu = AE),
+                rcov = ~vs(ds(environment), units),
+                data = df1, 
+                date.warning = FALSE,
+                iters = best_iter)
+                
+    # Increase the counter
+    itry = itry + 1
+    
+  }
+  
   
   # Heritability
   H2 <- herit.mmer(x = fit, method = "Cullis")
