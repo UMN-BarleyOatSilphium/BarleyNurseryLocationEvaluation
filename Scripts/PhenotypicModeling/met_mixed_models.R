@@ -108,7 +108,7 @@ for (i in seq_len(nrow(pheno_to_model))) {
   # If model fit is empty, try using a smaller number of iterations; for instance find
   # the maximum logLik and use those iterations
   itry <- 1
-  while (is_empty(model_fit) & itry == 1) {
+  while (is_empty(fit) & itry == 1) {
     
     # Find the number of iterations that maximized the logLik
     best_iter <- model_stdout %>% 

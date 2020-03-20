@@ -14,6 +14,7 @@ source(file.path(proj_dir, "startup.R"))
 # Additional packages
 library(GGally)
 library(Bilinear)
+library(GGEBiplots)
 
 
 
@@ -41,14 +42,15 @@ pheno_blup <- met_mm_out_example %>%
 
 ## Visualize balance of lines in trials
 ge_tab_pred <- pheno_blup %>% 
+  split(.$nursery) %>%
   # Complete trial-line_name cases
-  complete(line_name, trial, trait, fill = list(pheno = NA, ppv = NA)) %>%
+  map_df(~complete(droplevels(.), nursery, line_name, trial, trait, fill = list(pheno = NA, ppv = NA))) %>%
   mutate(obs = case_when(
     !is.na(pheno) ~ "phenotype",
     !is.na(ppv) ~ "prediction",
     TRUE ~ as.character(NA)
   )) %>%
-  group_by(line_name, trait) %>%
+  group_by(line_name, trait, nursery) %>%
   mutate(nPheno = sum(obs == "phenotype", na.rm = T) / n_distinct(trial),
          nMissing = sum(is.na(obs)) / n_distinct(trial)) %>%
   ungroup() %>% 
@@ -71,6 +73,7 @@ g_pred_freq <- freq_df_plot %>%
   scale_x_discrete(breaks = function(x) as.character(pretty(as.numeric(x), n = 20)), name = "Trial") +
   scale_fill_viridis_d(na.value = "white", begin = 0.2, end = 0.8,
                        guide = guide_legend(override.aes = list(color = "black"))) +
+  facet_grid(~ nursery, scales = "free_x") + 
   theme_presentation2(base_size = 16)
 
 
