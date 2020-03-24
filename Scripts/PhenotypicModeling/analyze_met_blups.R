@@ -15,7 +15,17 @@ source(file.path(proj_dir, "startup.R"))
 library(GGally)
 library(Bilinear)
 library(GGEBiplots)
+library(paletteer)
+library(ggrepel)
+library(cowplot)
 
+
+
+# Color pallete for environments and line names
+term_colors <- set_names(wes_palette("Zissou1")[c(1,5)], "line_name", "environment")
+
+# Function to rename terms
+f_term_replace <- function(x) str_replace_all(x, c("line_name" = "Genotype", "environment" = "Environment"))
 
 
 
@@ -24,6 +34,7 @@ library(GGEBiplots)
 # Load data
 #######################
 
+## Example analysis
 load(file.path(result_dir, "met_mixed_model_output_example.RData"))
 
 
@@ -32,7 +43,7 @@ pheno_blup <- met_mm_out_example %>%
   unnest(pred_pheno) %>%
   filter_at(vars(contains("nonzero")), all_vars(.)) %>%
   left_join(., select(trial_metadata, environment, trial)) %>%
-  mutate_at(vars(line_name, trial), as.factor) 
+  mutate_at(vars(line_name, trial, environment), as.factor) 
 
 
 #######################
@@ -63,51 +74,79 @@ freq_df_plot <- ge_tab_pred %>%
   # Convert line_name and location to numeric
   mutate_at(vars(line_name, trial), list(num = ~fct_inseq(as.factor(as.numeric(.)))))
 
-## Plot tiles of years of genotype-location observations
+
 g_pred_freq <- freq_df_plot %>%
-  filter(trait == first(trait)) %>%
+  filter(!is.na(obs)) %>%
+  # filter(nursery == "mvn", trait == "GrainProtein") %>%
   ggplot(aes(x = trial_num, y = line_name_num, fill = obs)) +
   geom_tile() +
-  # facet_grid(~ trait, drop = TRUE, scales = "free_x", space = "free_x") +
-  scale_y_discrete(breaks = function(x) as.character(pretty(as.numeric(x), n = 20)), name = "Genotype") +
-  scale_x_discrete(breaks = function(x) as.character(pretty(as.numeric(x), n = 20)), name = "Trial") +
+  scale_y_discrete(name = "Genotype") +
+  scale_x_discrete(name = "Trial") +
   scale_fill_viridis_d(na.value = "white", begin = 0.2, end = 0.8,
                        guide = guide_legend(override.aes = list(color = "black"))) +
-  facet_grid(~ nursery, scales = "free_x") + 
-  theme_presentation2(base_size = 16)
-
+  facet_wrap(~ nursery + trait, scales = "free") + 
+  theme_presentation2(base_size = 14) +
+  theme(axis.text = element_blank(), legend.position = "bottom")
 
 # Save
 ggsave(filename = "genotype_trial_contingency_example.jpg", path = fig_dir, plot = g_pred_freq,
-       height = 6, width = 8, dpi = 500)
-
-## Plot tiles of years of genotype-location observations
-g_pred_freq <- freq_df_plot %>%
-  filter(trait == first(trait), obs == "phenotype") %>%
-  ggplot(aes(x = trial_num, y = line_name_num, fill = obs)) +
-  geom_tile() +
-  # facet_grid(~ trait, drop = TRUE, scales = "free_x", space = "free_x") +
-  scale_y_discrete(breaks = function(x) as.character(pretty(as.numeric(x), n = 20)), name = "Genotype") +
-  scale_x_discrete(breaks = function(x) as.character(pretty(as.numeric(x), n = 20)), name = "Trial") +
-  scale_fill_viridis_d(na.value = "white", begin = 0.2, end = 0.8,
-                       guide = guide_legend(override.aes = list(color = "black"))) +
-  theme_presentation2(base_size = 16)
-
-
-# Save
-ggsave(filename = "genotype_trial_contingency_example1.jpg", path = fig_dir, plot = g_pred_freq,
-       height = 6, width = 8, dpi = 500)
-
-
+       height = 8, width = 5, dpi = 500)
 
 
 
 ## Table of phenotypic observations, predictions, and still missings
 freq_df_plot %>%
-  group_by(trait, obs) %>% 
+  group_by(trait, nursery, obs) %>% 
   summarize(n = n()) %>% 
   spread(obs, n)
 
+
+# Remove line names with any missing data
+pheno_blup_tomodel <- pheno_blup %>%
+  group_by(trait, nursery) %>%
+  do({
+    df <- .
+    
+    select(df, trial, line_name, ppv) %>%
+      droplevels() %>%
+      complete(trial, line_name, fill = list(ppv = NA)) %>%
+      group_by(line_name) %>%
+      filter(all(!is.na(ppv))) %>%
+      # Take average of duplicate line_name-trial combinations
+      group_by(line_name, trial) %>%
+      summarize(ppv = mean(ppv)) %>%
+      ungroup()
+    
+  }) %>% ungroup()
+
+
+## Summarize the number of genotype-environment combinations
+pheno_blup_tomodel %>%
+  group_by(trait, nursery) %>% 
+  summarize_at(vars(line_name, trial), n_distinct)
+
+
+
+  
+
+# # Re-plot contingencies
+# g_pred_freq1 <- pheno_blup_tomodel %>%
+#   # Convert line_name and location to numeric
+#   mutate_at(vars(line_name, trial), as.factor) %>%
+#   mutate_at(vars(line_name, trial), list(num = ~fct_inseq(as.factor(as.numeric(.))))) %>%
+#   ggplot(aes(x = trial_num, y = line_name_num, fill = obs)) +
+#   geom_tile() +
+#   scale_y_discrete(name = "Genotype") +
+#   scale_x_discrete(name = "Trial") +
+#   scale_fill_viridis_d(na.value = "white", begin = 0.2, end = 0.8,
+#                        guide = guide_legend(override.aes = list(color = "black"))) +
+#   facet_wrap(~ nursery + trait, scales = "free") + 
+#   theme_presentation2(base_size = 14) +
+#   theme(axis.text = element_blank(), legend.position = "bottom")
+# 
+# # Save
+# ggsave(filename = "genotype_trial_contingency_example.jpg", path = fig_dir, plot = g_pred_freq,
+#        height = 8, width = 5, dpi = 500)
 
 
 
@@ -127,7 +166,8 @@ met_var_comp <- met_mm_out_example %>%
 met_var_comp1 <- met_var_comp %>%
   left_join(trial_metadata) %>%
   filter(variance != 0) %>%
-  mutate(sdev = sqrt(variance))
+  mutate(variance = ifelse(variance <= 0, NA, variance),
+         sdev = sqrt(variance))
 
 ## Number of observations per location/trait
 met_var_comp_plot <- met_var_comp1 %>% 
@@ -137,11 +177,13 @@ met_var_comp_plot <- met_var_comp1 %>%
 
 # Plot error variance by location and trait
 g_met_varR <- met_var_comp1 %>%
-  ggplot(aes(location, y = variance, fill = trait)) +
+  ggplot(aes(location, y = sdev, fill = trait)) +
   geom_jitter(aes(color = trait), width = 0.25) +
-  geom_boxplot(width = 0.5, alpha = 0.5) +
-  facet_grid(trait ~ ., scales = "free_y", switch = "y") +
-  theme_light()
+  # geom_boxplot(width = 0.5, alpha = 0.5) +
+  scale_y_continuous(breaks = pretty, trans = "identity") +
+  facet_grid(trait ~ nursery, scales = "free", switch = "y") +
+  theme_light() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 # Save
 ggsave(filename = "nursery_example_location_varR.jpg", path = fig_dir, plot = g_met_varR,
@@ -156,27 +198,19 @@ ggsave(filename = "nursery_example_location_varR.jpg", path = fig_dir, plot = g_
 #######################
 
 
-# Remove line names with any missing data
-pheno_blup_tomodel <- pheno_blup %>%
-  select(trait, trial, environment, line_name, ppv) %>%
-  complete(trial, line_name, trait, fill = list(ppv = NA)) %>%
-  group_by(trait, line_name) %>%
-  filter(all(!is.na(ppv))) %>%
-  ungroup()
-
 ## Fit a GGE model per trait ##
 bilinear_fit <- pheno_blup_tomodel %>%
-  group_by(trait) %>%
+  group_by(trait, nursery) %>%
   do({
     df <- .
     df1 <- droplevels(df)
     
     # Fit the model
-    ammi <- bilinear(x = df1, G = "line_name", E = "environment", y = "ppv", test = "bootstrap", B = 1, 
+    ammi <- bilinear(x = df1, G = "line_name", E = "trial", y = "ppv", test = "bootstrap", B = 1, 
                     model = "AMMI")
 
     # Fit the GGE model
-    gge <- bilinear(x = df1, G = "line_name", E = "environment", y = "ppv", test = "bootstrap", B = 1, 
+    gge <- bilinear(x = df1, G = "line_name", E = "trial", y = "ppv", test = "bootstrap", B = 1, 
                     model = "GGE")
     
     # return both
@@ -201,9 +235,9 @@ bilinear_scores <- bilinear_fit %>%
 bilinear_scores %>%
   unnest(varprop) %>% 
   # Plot
-  ggplot(aes(x = PC_num, y = propvar_SS)) +
+  ggplot(aes(x = PC_num, y = propvar_SS, shape = model)) +
   geom_point() + 
-  facet_wrap(model ~ trait, scales = "free_x")
+  facet_wrap(~ nursery + trait, scales = "free_x")
 
 ## Determine significant PCs using "elbow" method
 # Tolerance for difference in variance explained
@@ -215,23 +249,23 @@ bilinear_sig_PCs <- bilinear_scores %>%
   mutate(propvar = propvar_SS) %>%
   #
   arrange(trait, model, PC_num) %>%
-  group_by(trait, model) %>%
+  group_by(trait, model, nursery) %>%
   do({
     mutate(., propvar_diff = c(abs(diff(propvar)), 0), stop = which.min(propvar_diff >= tol), 
            nPC = stop - 1)
   }) %>% ungroup()
 
 ## Summary df of number of sig PCs
-bilinear_sig_PCs_summ <- bilinear_sig_PCs %>%
-  group_by(trait, model) %>%
+(bilinear_sig_PCs_summ <- bilinear_sig_PCs %>%
+  group_by(trait, model, nursery) %>%
   filter(PC_num %in% seq(1, unique(nPC))) %>%
-  summarize(total_propvar = sum(propvar), nPC = unique(nPC))
+  summarize(total_propvar = sum(propvar), nPC = unique(nPC)))
 
 
 ## Fit a model for that number of PCS
 bilinear_fitN_fit <- bilinear_fit %>%
   left_join(., bilinear_sig_PCs_summ) %>%
-  group_by(trait, model) %>%
+  group_by(trait, model, nursery) %>%
   do({
     
     row <- .
@@ -245,10 +279,14 @@ bilinear_fitN_fit <- bilinear_fit %>%
     e_effects <- fitted$Eeffect %>%
       tibble(environment = names(.), effect = .)
     
+    ## Get the singular value decomposition
+    svd <- fitted$svdE
     
-    # Get the environmental and genotypic scores
-    g_scores <- fitted$scores$Gscores
-    e_scores <- fitted$scores$Escores
+    g_scores <- svd$u %*% diag(sqrt(svd$d))
+    dimnames(g_scores) <- list(g_effects$line_name, paste0("PC", seq_len(ncol(g_scores))))
+    
+    e_scores <- svd$v %*% diag(sqrt(svd$d))
+    dimnames(e_scores) <- list(e_effects$environment, paste0("PC", seq_len(ncol(e_scores))))
     
     ## Sum the first nPC scores
     g_scores_sum <- rowSums(g_scores[,seq_len(nPC), drop = FALSE])
@@ -280,7 +318,8 @@ bilinear_fitN_fit <- bilinear_fit %>%
     tibble(mu = fitted$mu, y_hat = list(y_hat_df), g_scores = list(g_effects_scores),
            e_scores = list(e_effects_scores), phi = list(phi))
     
-  }) %>% ungroup()
+  }) %>% ungroup() %>%
+  left_join(., nest(group_by(select(bilinear_sig_PCs, trait, nursery, model, PC, propvar_SS), trait, nursery, model), .key = "PC_summ"))
 
 
 
@@ -295,7 +334,7 @@ trait_dir_df <- tribble(
 bilinear_ranks <- bilinear_fitN_fit %>%
   unnest(y_hat) %>%
   left_join(., trait_dir_df) %>%
-  group_by(trait, model) %>%
+  group_by(trait, model, nursery) %>%
   do({
     .x <- .
     
@@ -316,7 +355,7 @@ bilinear_ranks <- bilinear_fitN_fit %>%
 
 ## Assign mega-environments
 bilinear_me <- bilinear_ranks %>% 
-  group_by(trait, model) %>%
+  group_by(trait, model, nursery) %>%
   do({
     group_by(., environment) %>% 
       filter(rank == min(rank)) %>% 
@@ -325,6 +364,11 @@ bilinear_me <- bilinear_ranks %>%
   }) %>%
   ungroup() %>%
   select(-mu, -y_hat, -dir, -rank)
+
+
+bilinear_me %>%
+  distinct(trait, model, nursery, me)
+
 
 
 ## Save the model output
@@ -340,10 +384,10 @@ save("bilinear_fit", "bilinear_fitN_fit", "bilinear_me", file = file.path(result
 
 
 ## Calculate correlations based on phenotypic data
-location_gen_cor_pheno <- inner_join(pheno_dat, distinct(pheno_blup_tomodel, trait, trial, line_name)) %>%
-  group_by(trait, line_name, location, environment) %>%
+location_gen_cor_pheno <- inner_join(pheno_dat, distinct(pheno_blup_tomodel, nursery, trait, trial, line_name)) %>%
+  group_by(trait, nursery, line_name, location, environment) %>%
   summarize_at(vars(value), mean) %>%
-  group_by(trait, location) %>%
+  group_by(trait, nursery, location) %>%
   filter(n_distinct(environment) > 1) %>%
   do({
     df <- .
@@ -377,23 +421,222 @@ location_adj_year_cor <- location_gen_cor_pheno %>%
 
 ## Summarize
 location_adj_year_cor_summ <- location_adj_year_cor %>%
-  group_by(trait, location) %>%
+  group_by(trait, location, nursery) %>%
   summarize_at(vars(corr, nCorr), mean)
 
 
 # Plot
-location_adj_year_cor %>%
+g_location_cor <- location_adj_year_cor %>%
   ggplot(aes(x = location, y = corr)) +
   geom_jitter(width = 0.25) +
   geom_boxplot(alpha = 0.5, fill = "grey85", width = 0.5) +
-  facet_grid(~ trait) +
-  theme_light()
+  facet_grid(trait ~ nursery, switch = "y", scales = "free_x", space = "free_x", drop = TRUE) +
+  theme_light() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
   
+# Save
+ggsave(filename = "location_correlation_example.jpg", plot = g_location_cor, path = fig_dir,
+       height = 5, width = 5, dpi = 1000)
 
 
 
 
 
+
+
+
+
+
+
+
+#######################
+# Biplot
+#######################
+
+## Plot the fitted AMMI or GGE models
+
+
+# Load data
+load(file.path(result_dir, "bilinear_model_fit.RData"))
+
+
+## Common plot modifyer
+g_plot_mod <- list(
+  scale_color_manual(values = term_colors, labels = f_term_replace, name = NULL),
+  scale_x_continuous(breaks = pretty),
+  scale_y_continuous(breaks = pretty),
+  theme_light()
+)
+
+
+## Plotting df
+bilinear_toplot <- bilinear_fit %>%
+  group_by(trait, model, nursery) %>%
+  do(plotting_df = {
+    row <- .
+    
+    ## Choose plot based on ammi versus gge
+    if (unique(row$model) == "ammi") {
+      
+      ## Get the IPCA scores
+      row$fit[[1]]$scores %>%
+        map(as.data.frame) %>%
+        imap_dfr(~rownames_to_column(.x, "term") %>% mutate(group = ifelse(.y == "Gscores", "line_name", "environment"))) %>%
+        # Add effects
+        left_join(., map_df(row$fit[[1]][c("Geffect", "Eeffect")], ~tibble(term = names(.), effect = .))) %>%
+        left_join(., distinct(trial_metadata, trial, location, environment), by = c("term" = "trial"))
+      
+    } else {
+      
+      ## Get the IPCA scores; divide by singular values
+      row$fit[[1]]$scores %>%
+        map(~.x / matrix(data = sqrt(row$fit[[1]]$svdE$d[seq_len(ncol(.x))]), nrow = nrow(.x), ncol = ncol(.x))) %>%
+        map(as.data.frame) %>%
+        imap_dfr(~rownames_to_column(.x, "term") %>% mutate(group = ifelse(.y == "Gscores", "line_name", "environment"))) %>%
+        left_join(., distinct(trial_metadata, trial, location, environment), by = c("term" = "trial"))
+      
+    }
+    
+  }) %>% ungroup() %>%
+  # Add the PC summary
+  left_join(., select(bilinear_fitN_fit, trait, model, nursery, PC_summ))
+
+
+
+# Group by row plot
+biplots <- bilinear_toplot %>%
+  group_by(trait, model, nursery) %>%
+  do(plot = {
+    row <- .
+    df <- row$plotting_df[[1]]
+    PC_summ <- row$PC_summ[[1]]
+    
+    ## Choose plot based on ammi versus gge
+    if (row$model == "ammi") {
+      
+      g_plot <- df %>%
+        ggplot(aes(x = effect, y = PC1, color = group)) +
+        geom_point(data = subset(df, group == "line_name"), size = 0.5, shape = 3) +
+        geom_text(data = subset(df, group == "environment"), aes(label = environment), size = 2) +
+        xlab("Effect") + 
+        ylab(paste0("IPCA1 (", round(subset(PC_summ, PC == "PC1", propvar_SS, drop = TRUE), 2) * 100, "%)")) + 
+        labs(subtitle = paste0("AMMI biplot, ", str_add_space(row$trait))) +
+        g_plot_mod
+      
+    } else {
+      
+      g_plot <- df %>%
+        ggplot(aes(x = PC1, y = PC2, color = group)) +
+        geom_point(data = subset(df, group == "line_name"), size = 0.5, shape = 3) +
+        geom_text(data = subset(df, group == "environment"), aes(label = environment), size = 2) +
+        # geom_text_repel(data = subset(df, group == "environment"), aes(label = environment)) +
+        # geom_point(data = subset(df, group == "environment"), size = 1.5) +
+        xlab(paste0("PCA1 (", round(subset(PC_summ, PC == "PC1", propvar_SS, drop = TRUE), 2) * 100, "%)")) + 
+        ylab(paste0("PCA2 (", round(subset(PC_summ, PC == "PC2", propvar_SS, drop = TRUE), 2) * 100, "%)")) + 
+        labs(subtitle = paste0("GGE biplot, ", str_add_space(row$trait))) +
+        g_plot_mod
+      
+    }
+    
+    g_plot
+    
+  })
+
+## colors for the lines
+segments_colors <- paletteer_d("ggsci", "uniform_startrek")
+
+
+## Plot GGE-GGL biplots
+# Group by row plot
+ggl_biplots <- bilinear_toplot %>%
+  filter(model == "gge") %>%
+  group_by(trait, model, nursery) %>%
+  do(plot = {
+    row <- .
+    df <- row$plotting_df[[1]]
+    PC_summ <- row$PC_summ[[1]]
+    
+    
+    ## Calculate average PCs for location
+    location_df <- aggregate(cbind(PC1, PC2) ~ location + group, data = df, FUN = mean, subset = group == "environment") %>%
+      rename_at(vars(PC1, PC2), ~paste0("location_", .)) %>%
+      mutate(x0 = 0, x1 = location_PC1, y0 = 0, y1 = location_PC2)
+    # Add location information to df
+    df1 <- subset(df, group == "environment") %>% 
+      left_join(., location_df) %>%
+      mutate(x0 = location_PC1, x1 = PC1, y0 = location_PC2, y1 = PC2)
+    
+    ## GGL-GGE biplot
+    g_plot <- df %>%
+      ggplot(aes(x = PC1, y = PC2, color = group)) +
+      geom_point(data = subset(df, group == "line_name"), size = 0.5, shape = 3) +
+      geom_point(data = df1, color = segments_colors[1], size = 0.5) +
+      geom_segment(data = location_df, aes(x = x0, y = y0, xend = x1, yend = y1), color = segments_colors[2]) +
+      geom_segment(data = df1, aes(x = x0, y = y0, xend = x1, yend = y1), color = segments_colors[1]) +
+      geom_text(data = location_df, aes(label = location, x = location_PC1, y = location_PC2), size = 4) +
+      xlab(paste0("PCA1 (", round(subset(PC_summ, PC == "PC1", propvar_SS, drop = TRUE), 2) * 100, "%)")) + 
+      ylab(paste0("PCA2 (", round(subset(PC_summ, PC == "PC2", propvar_SS, drop = TRUE), 2) * 100, "%)")) + 
+      labs(subtitle = paste0("GGE biplot, ", str_add_space(row$trait), ", ", toupper(row$nursery))) +
+      g_plot_mod +
+      scale_color_discrete(guide = FALSE) 
+    
+    g_plot
+    
+  }) %>% ungroup()
+
+
+# Combine plots
+gge_plot_combine <- plot_grid(plotlist = ggl_biplots$plot, ncol = 2, align = "hv")
+
+ggsave(filename = "ggl_gge_biplot_examples.jpg", plot = gge_plot_combine, path = fig_dir,
+       height = 10, width = 12, dpi = 1000)
+
+
+
+
+## Remove genotype points
+ggl_biplots1 <- bilinear_toplot %>%
+  filter(model == "gge") %>%
+  group_by(trait, model, nursery) %>%
+  do(plot = {
+    row <- .
+    df <- row$plotting_df[[1]]
+    PC_summ <- row$PC_summ[[1]]
+    
+    
+    ## Calculate average PCs for location
+    location_df <- aggregate(cbind(PC1, PC2) ~ location + group, data = df, FUN = mean, subset = group == "environment") %>%
+      rename_at(vars(PC1, PC2), ~paste0("location_", .)) %>%
+      mutate(x0 = 0, x1 = location_PC1, y0 = 0, y1 = location_PC2)
+    # Add location information to df
+    df1 <- subset(df, group == "environment") %>% 
+      left_join(., location_df) %>%
+      mutate(x0 = location_PC1, x1 = PC1, y0 = location_PC2, y1 = PC2)
+    
+    ## GGL-GGE biplot
+    g_plot <- df %>%
+      ggplot(aes(x = PC1, y = PC2, color = group)) +
+      # geom_point(data = subset(df, group == "line_name"), size = 0.5, shape = 3) +
+      geom_point(data = df1, color = segments_colors[1], size = 0.5) +
+      geom_segment(data = location_df, aes(x = x0, y = y0, xend = x1, yend = y1), color = segments_colors[2]) +
+      geom_segment(data = df1, aes(x = x0, y = y0, xend = x1, yend = y1), color = segments_colors[1]) +
+      geom_text(data = location_df, aes(label = location, x = location_PC1, y = location_PC2), size = 4) +
+      xlab(paste0("PCA1 (", round(subset(PC_summ, PC == "PC1", propvar_SS, drop = TRUE), 2) * 100, "%)")) + 
+      ylab(paste0("PCA2 (", round(subset(PC_summ, PC == "PC2", propvar_SS, drop = TRUE), 2) * 100, "%)")) + 
+      labs(subtitle = paste0("GGE biplot, ", str_add_space(row$trait), ", ", toupper(row$nursery))) +
+      g_plot_mod +
+      scale_color_discrete(guide = FALSE) 
+    
+    g_plot
+    
+  }) %>% ungroup()
+
+
+# Combine plots
+gge_plot_combine <- plot_grid(plotlist = ggl_biplots1$plot, ncol = 2, align = "hv")
+
+ggsave(filename = "ggl_gge_biplot_examples_nogenotypes.jpg", plot = gge_plot_combine, path = fig_dir,
+       height = 10, width = 12, dpi = 1000)
 
 
 
