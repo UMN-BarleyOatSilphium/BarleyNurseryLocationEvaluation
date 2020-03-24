@@ -51,9 +51,7 @@ pheno_dat <- read.csv(file = file.path(data_dir, "nursery_phenotype_data_use.csv
 
 
 # Trial metadata
-trial_metadata <- read_csv(file = file.path(data_dir, "nursery_trial_metadata_use1.csv")) %>%
-  # Dryland == rainfed
-  mutate(management = ifelse(management == "irrigated", "irrigated", "rainfed"))
+trial_metadata <- read_csv(file = file.path(data_dir, "nursery_trial_metadata_use.csv"))
 
 # Line metadata
 line_metadata <- read_csv(file = file.path(data_dir, "nursery_entry_metadata_use.csv"))

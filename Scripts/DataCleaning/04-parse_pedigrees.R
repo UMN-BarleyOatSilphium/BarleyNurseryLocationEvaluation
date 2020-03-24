@@ -661,14 +661,14 @@ pedigreeToolsIn_sorted <- editPed(sire = pedigreeToolsIn$sire, dam = pedigreeToo
                                   label = pedigreeToolsIn$label)
 
 # Merge the sorted table with the original table
-ped_table <- pedigreeToolsIn_sorted %>% 
+pedigree_table <- pedigreeToolsIn_sorted %>% 
   select(name = label, par1 = sire, par2 = dam) %>% 
   left_join(., pedtools_out3, by = c("name" = "Name", "par1" = "Parent1_edit", "par2" = "Parent2_edit"))
 
 
 ## Calculate A assuming selfing
-pedigreeA_self <- getASelfing(ID = ped_table$name, Par1 = ped_table$par1, Par2 = ped_table$par2, 
-                              nCycles = ped_table$selfing, nCyclesDefault = 10)
+pedigreeA_self <- getASelfing(ID = pedigree_table$name, Par1 = pedigree_table$par1, Par2 = pedigree_table$par2, 
+                              nCycles = pedigree_table$selfing, nCyclesDefault = 10)
 
 # Convert to matrix
 pedigreeA_self_mat <- as.matrix(pedigreeA_self)
@@ -731,7 +731,7 @@ names(subset(unrelated, unrelated))
 
 
 # Save both
-save("pedigree_Amat", "pedigree_Amat_df", file = file.path(tidy_dir, "nursery_pedigree_relmat.RData"))
+save("pedigree_Amat", "pedigree_Amat_df", "pedigree_table", file = file.path(tidy_dir, "nursery_pedigree_relmat.RData"))
 
 
 

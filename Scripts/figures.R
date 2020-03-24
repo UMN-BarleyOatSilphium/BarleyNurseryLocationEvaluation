@@ -13,6 +13,8 @@ source(file.path(proj_dir, "startup.R"))
 
 
 library(wesanderson)
+library(ggrepel)
+library(cowplot)
 
 # Color pallete for environments and line names
 term_colors <- set_names(wes_palette("Zissou1")[c(1,5)], "line_name", "environment")
@@ -83,91 +85,10 @@ ggsave(filename = "trial_location_map.jpg", plot = g_map, path = fig_dir,
 
 
 
-#######################
-# Biplot
-#######################
-
-## Plot the fitted AMMI or GGE models
-
-
-# Load data
-load(file.path(result_dir, "bilinear_model_fit.RData"))
-
-
-## Common plot modifyer
-g_plot_mod <- list(
-  scale_color_manual(values = term_colors, labels = f_term_replace, name = NULL),
-  scale_x_continuous(breaks = pretty),
-  scale_y_continuous(breaks = pretty),
-  theme_light()
-)
-
-
-## Plotting df
-bilinear_toplot <- bilinear_fit %>%
-  group_by(trait, model) %>%
-  do(plotting_df = {
-    row <- .
-    
-    ## Choose plot based on ammi versus gge
-    if (unique(row$model) == "ammi") {
-      
-      ## Get the IPCA scores
-      row$fit[[1]]$scores %>%
-        map(as.data.frame) %>%
-        imap_dfr(~rownames_to_column(.x, "term") %>% mutate(group = ifelse(.y == "Gscores", "line_name", "environment"))) %>%
-        # Add effects
-        left_join(., map_df(row$fit[[1]][c("Geffect", "Eeffect")], ~tibble(term = names(.), effect = .)))
-      
-    } else {
-      
-      ## Get the IPCA scores; divide by singular values
-      row$fit[[1]]$scores %>%
-        map(~.x / matrix(data = sqrt(row$fit[[1]]$svdE$d[seq_len(ncol(.x))]), nrow = nrow(.x), ncol = ncol(.x))) %>%
-        map(as.data.frame) %>%
-        imap_dfr(~rownames_to_column(.x, "term") %>% mutate(group = ifelse(.y == "Gscores", "line_name", "environment"))) 
-
-    }
-    
-  }) %>% ungroup()
-    
-
-
-# Group by trait and model; plot
-biplots <- bilinear_toplot %>%
-  group_by(trait, model) %>%
-  do(plot = {
-    row <- .
-    df <- row$plotting_df[[1]]
-    
-    ## Choose plot based on ammi versus gge
-    if (row$model == "ammi") {
-      
-      g_plot <- df %>%
-        ggplot(aes(x = effect, y = PC1, color = group)) +
-        geom_point(data = subset(df, group == "line_name"), size = 0.5) +
-        geom_point(data = subset(df, group == "environment"), size = 1.5) +
-        xlab("Effect") + ylab("IPCA1") +
-        labs(subtitle = paste0("AMMI biplot, ", str_add_space(row$trait))) +
-        g_plot_mod
-      
-    } else {
-      
-      g_plot <- df %>%
-        ggplot(aes(x = PC1, y = PC2, color = group)) +
-        geom_point(data = subset(df, group == "line_name"), size = 0.5) +
-        geom_point(data = subset(df, group == "environment"), size = 1.5) +
-        xlab("PC1") + ylab("PC2") +
-        labs(subtitle = paste0("GGE biplot, ", str_add_space(row$trait))) +
-        g_plot_mod
-      
-    }
-    
-    g_plot
-    
-  })
 
     
+
+
     
 
 

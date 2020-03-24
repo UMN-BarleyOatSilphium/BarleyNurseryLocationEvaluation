@@ -15,7 +15,7 @@
 
 
 # Packages to use
-packages <- c("tidyverse", "readxl", "lubridate", "measurements")
+packages <- c("tidyverse", "readxl", "lubridate", "measurements", "jsonlite", "neyhart")
 invisible(lapply(packages, library, character.only = TRUE))
 
 ## Source a script for relevant functions
@@ -167,7 +167,7 @@ wrn_agro_data_df <- wrn_agro_data1 %>%
   # Coalesce line name, cultivar, or selection
   mutate(line_name = coalesce(selection, cultivar.),
          # Extract dryland or irrigated
-         management = ifelse(str_detect(table_name, "DRYLAND"), "dryland", "irrigated"),
+         management = ifelse(str_detect(table_name, "DRYLAND"), "rainfed", "irrigated"),
          # Rename location
          location = str_to_title(location) %>% str_remove_all(., " "),
          # Remove spaces and capital letters from trait
@@ -298,6 +298,14 @@ nursery_trial_metadata_tidy <- nursery_trial_metadata2 %>%
 
 ## Create environmental codes
 nursery_trial_metadata_tidy1 <- nursery_trial_metadata_tidy %>%
+  # Make location corrections
+  mutate(location = case_when(
+    location == "Gennesse" ~ "Genesee", 
+    location == "Moorehead" ~ "Moorhead",
+    location == "Stirling" ~ "Sterling",
+    location == "Tammany" ~ "Lewiston",
+    TRUE ~ location)
+  ) %>%
   # Remove spaces from location, create environment code and trial name and RorI for rain/irr
   mutate(mgmt = ifelse(str_detect(trial, "Rainfed"), "R", "I"),
          environment = paste0(toupper(abbreviate(location, 3)), str_sub(year, 3, 4), mgmt)) %>%
@@ -312,8 +320,74 @@ nursery_data_tidy1 <- nursery_data_tidy %>%
 
 
 
+## Determine approximate lat/long coordinates of locations ##
+
+# String of us states and canadian provinces
+# State names and Canadian provinces to remove
+province_df <- rvest::html_table(rvest::html_session("https://www12.statcan.gc.ca/census-recensement/2011/ref/dict/table-tableau/table-tableau-8-eng.cfm"))[[1]][-1,]
+province.names <- province_df$`Province/Territory`
+province.abb <- province_df$`Internationally approved alpha code (Source: Canada Post)`
+
+state.prov.abb <- c(state.abb, province.abb)
+state.prov.names <- c(state.name, province.names)
+
+
+
+
+# Use open streen map to find lat/long coordinates for each site
+
+location_meta <- nursery_trial_metadata_tidy1 %>%
+  distinct(location, state) %>%
+  arrange(location) %>%
+  mutate(out = list(NULL))
+
+# Base url for sending queries
+base_url <- "https://nominatim.openstreetmap.org/search.php?"
+
+# Loop over locations
+for (i in seq_len(nrow(location_meta))) {
+  
+  # Convert city and state into long form
+  city <- str_replace_all(str_add_space(location_meta$location[i]), " ", "%20")
+  state <- str_replace_all(state.prov.names[state.prov.abb == location_meta$state[i]], " ", "%20")
+  country <- ifelse(location_meta$state[i] %in% state.abb, "US", "CA")
+  
+  # Create the query string
+  query_url <- paste0(
+    base_url,
+    "city=", city,
+    "&state=", state,
+    "&countrycodes=", country,
+    "&limit=9&format=json"
+  )
+  
+  if (city == "Kernen") {
+    # Convert lat/long to tibble
+    location_meta$out[[i]] <- tibble(lat = "52.150705", long = "-106.543686")
+    
+    
+  } else {
+    
+    # Send query and read json output
+    query_out <- read_json(path = query_url)
+    
+    # Convert lat/long to tibble
+    location_meta$out[[i]] <- tibble(lat = query_out[[1]]$lat, long = query_out[[1]]$lon)
+    
+  }
+
+}
+
+
+location_meta1 <- location_meta %>% 
+  unnest(out) %>% 
+  mutate_if(is.character, parse_guess)
+
+## Recombine with trial metadata, save
+nursery_trial_metadata_tidy2 <- left_join(nursery_trial_metadata_tidy1, location_meta1)
+
 ## Write a table of locations as a CSV
-write_csv(x = nursery_trial_metadata_tidy1, path = file.path(tidy_dir, "nursery_trial_metadata_use.csv"), na = "")
+write_csv(x = nursery_trial_metadata_tidy2, path = file.path(tidy_dir, "nursery_trial_metadata_use.csv"), na = "")
 
 
 
@@ -327,9 +401,17 @@ write_csv(x = nursery_trial_metadata_tidy1, path = file.path(tidy_dir, "nursery_
 ## Tasks:
 ## 1. Clean up line names
 ## 2. Rename traits; make sure values make sense for those traits
+## 3. Rename trials using the new location information from above
+
+nursery_trial_metadata_tidy3 <- nursery_trial_metadata_tidy2 %>%
+  mutate(trial_new = paste0(toupper(nursery), "_", year, "_", location, "_", str_to_title(management)))
 
 # Combine maltq and agro trait data
-nursery_trait_data <- nursery_data_tidy1
+nursery_trait_data <- nursery_data_tidy1 %>%
+  # Rename trials, location, environment, management, etc
+  select(trial, trait, line_name, value) %>%
+  left_join(., nursery_trial_metadata_tidy3) %>%
+  select(trial = trial_new, nursery, location, year, management, environment, trait, line_name, value)
 
 nursery_trait_data %>% group_by_at(vars(-value)) %>% filter(n() > 1)  
 
