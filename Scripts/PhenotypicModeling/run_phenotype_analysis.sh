@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#PBS -l walltime=24:00:00,mem=150gb,nodes=1:ppn=1
+#PBS -l walltime=36:00:00,mem=250gb,nodes=1:ppn=1
 #PBS -N met_mixed_model
 #PBS -M neyha001@umn.edu
 #PBS -m abe
