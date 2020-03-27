@@ -20,6 +20,12 @@
 # proj_dir <- getwd()
 # source(file.path(proj_dir, "startup.R"))
 
+
+# Get the script arguments - traits
+args <- commandArgs(trailingOnly = TRUE)
+traits <- args
+
+
 # Run the source script
 proj_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Projects/BarleyNurseryAnalysis"
 source(file.path(proj_dir, "startup_MSI.R"))
@@ -37,6 +43,7 @@ traits_tokeep <- c("GrainProtein", "MaltExtract", "GrainYield", "HeadingDate", "
 ## Nest phenotypic data by trait, nursery, and management
 pheno_dat_subset <- pheno_dat %>%
   filter(trait %in% traits_tokeep) %>%
+  filter(trait %in% traits) %>%
   select(-trial) %>%
   left_join(., select(trial_metadata, trial, environment, nursery, management)) %>%
   mutate_at(vars(trial, line_name, environment), as.factor)
@@ -187,6 +194,7 @@ met_mm_out <- pheno_to_model %>%
   select(-data)
 
 # Save
-save("met_mm_out", file = file.path(result_dir, "met_mixed_model_output.RData"))
+filename <- file.path(result_dir, paste0(c(traits, "met_mixed_model_output.RData"), collapse = "_"))
+save("met_mm_out", file = filename)
 
 
