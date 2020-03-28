@@ -180,7 +180,7 @@ for (i in seq_len(nrow(pheno_to_model))) {
   
   
   # Assemble into a df
-  pheno_to_model$out[[i]] <- tibble(H2 = H2, var_comp = list(var_comp), pred_pheno = list(PPV),
+  pheno_to_model$out[[i]] <- tibble(H2 = list(H2), var_comp = list(var_comp), pred_pheno = list(PPV),
                                     model_summ = list(model_summ))
   
   ## Print a message
