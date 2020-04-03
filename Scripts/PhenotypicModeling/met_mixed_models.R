@@ -21,11 +21,6 @@
 # source(file.path(proj_dir, "startup.R"))
 
 
-# Get the script arguments - traits
-args <- commandArgs(trailingOnly = TRUE)
-traits <- args
-
-
 # Run the source script
 proj_dir <- "/panfs/roc/groups/6/smithkp/neyha001/Projects/BarleyNurseryAnalysis"
 source(file.path(proj_dir, "startup_MSI.R"))
@@ -35,40 +30,59 @@ library(broom)
 library(Matrix)
 library(modelr)
 
+# Get the script arguments 
+# arg1: traits
+# arg2: nursery
+# arg3: management
+args <- commandArgs(trailingOnly = TRUE)
+# Create an argument filter expression
+arg1 <- if (is.na(args[1])) unique(pheno_dat$trait) else args[1]
+arg2 <- if (is.na(args[2])) unique(trial_metadata$nursery) else args[2]
+arg3 <- if (is.na(args[3])) unique(trial_metadata$management) else args[3]
 
 ## Subset more relevant traits
-traits_tokeep <- c("GrainProtein", "MaltExtract", "GrainYield", "HeadingDate", "PlantHeight")
+traits_tokeep <- c("GrainProtein", "MaltExtract", "GrainYield", "HeadingDate", "PlantHeight",
+                   "BetaGlucan", "DiastaticPower", "FreeAminoNitrogen", "KernelWeight",
+                   "PlumpGrain", "SolubleProteinTotalProtein", "TestWeight")
+
+# Minimum number of years in which a location was observed
+min_year <- 5
+# Minimum number of locations in which a trait was observed
+min_loc <- 5
 
 
 ## Nest phenotypic data by trait, nursery, and management
-pheno_dat_subset <- pheno_dat %>%
-  filter(trait %in% traits_tokeep) %>%
-  filter(trait %in% traits) %>%
+pheno_to_model <- pheno_dat %>%
   select(-trial) %>%
   left_join(., select(trial_metadata, trial, environment, nursery, management)) %>%
+  filter(trait %in% traits_tokeep) %>%
+  # Filter from args
+  filter(trait %in% arg1, nursery %in% arg2, management %in% arg3) %>%
   mutate_at(vars(trial, line_name, environment), as.factor)
 
 
 ## Apply some filters to the dataset
 ## 1. locations must be observed in >= 5 years
-pheno_dat_subset1 <- pheno_dat_subset %>% 
+pheno_to_model <- pheno_to_model %>% 
   group_by(trait, nursery, management, location) %>% 
-  filter(n_distinct(year1) >= 5) %>%
+  filter(n_distinct(year1) >= min_year) %>%
+  group_by(trait, nursery, management) %>% 
+  filter(n_distinct(location) >= min_loc) %>%
   ungroup() %>%
   droplevels()
 
-
-# Get a list of genotypes
-genotypes <- levels(pheno_dat_subset1$line_name)
-
-## Convert the pedigree mat to A
-A <- as.matrix(pedigree_Amat[genotypes, genotypes]); rm(pedigree_Amat)
+# # # ## Assess observations
+# pheno_to_model %>%
+#   group_by(trait, nursery, management) %>%
+#   summarize_at(vars(line_name, environment, location, year), n_distinct) %>%
+#   mutate(n_pred_obs = line_name * environment) %>%
+#   View
 
 
 ## Set the model expression to evaluatate
 model_exp <- expression({
   fit <- mmer(fixed = value ~ 1 + environment,
-              random = ~vs(line_name, Gu = A_use) + vs(line_name:environment, Gu = AE),
+              random = ~vs(line_name, Gu = A) + vs(line_name:environment, Gu = AE),
               rcov = ~vs(ds(environment), units),
               data = df1, 
               date.warning = FALSE)
@@ -76,7 +90,7 @@ model_exp <- expression({
 
 
 ## Nest
-pheno_to_model <- pheno_dat_subset1 %>%
+pheno_to_model <- pheno_to_model %>%
   group_by(trait, nursery, management) %>%
   nest() %>%
   mutate(out = list(NULL))
@@ -91,9 +105,12 @@ for (i in seq_len(nrow(pheno_to_model))) {
   # df1 <- subset(df1, year1 < 2004) %>%
   #   droplevels()
   
-  # Subset the A matrix
-  A_use <- A %>% 
-    subset(row.names(.) %in% levels(df1$line_name), colnames(.) %in% levels(df1$line_name))
+  # Get a list of genotypes
+  genotypes <- levels(df1$line_name)
+  
+  
+  # Subset the pedigree relationship matrix
+  A <- as.matrix(pedigree_Amat[genotypes, genotypes])
   
   ## Build a relationship matrix for GxE
   # E matrix for environments
@@ -104,10 +121,19 @@ for (i in seq_len(nrow(pheno_to_model))) {
   #   spread(environment, value) %>%
   #   select(levels(df1$environment)) %>%
   #   cor(., use = "pairwise.complete.obs")
-  AE <- as.matrix(kronecker(A_use, E, make.dimnames = TRUE))
-  dimnames(AE) <- replicate(2, paste(rep(row.names(A_use), each = ncol(E)), row.names(E), sep = ":"), simplify = F)
+  AE <- as.matrix(kronecker(A, E, make.dimnames = TRUE))
+  dimnames(AE) <- replicate(2, paste(rep(row.names(A), each = ncol(E)), row.names(E), sep = ":"), simplify = F)
   
   ### Fit the model ###
+  
+  # # Example
+  # fit <- mmer(fixed = value ~ 1 + environment,
+  #             random = ~vs(ds(environment), line_name, Gu = A),
+  #             rcov = ~vs(ds(environment), units),
+  #             data = df1, 
+  #             date.warning = FALSE)
+  
+  
   
   ## Try to fit the model; capture the output
   model_try <- try( model_stdout <- capture.output({ eval(model_exp) }), silent = TRUE )

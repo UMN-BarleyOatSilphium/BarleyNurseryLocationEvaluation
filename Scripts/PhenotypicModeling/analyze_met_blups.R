@@ -22,7 +22,7 @@ library(cowplot)
 
 
 # Color pallete for environments and line names
-term_colors <- set_names(wes_palette("Zissou1")[c(1,5)], "line_name", "environment")
+term_colors <- set_names(paletteer_d(package = "wesanderson", palette = "Zissou1")[c(1,5)], "line_name", "environment")
 
 # Function to rename terms
 f_term_replace <- function(x) str_replace_all(x, c("line_name" = "Genotype", "environment" = "Environment"))
@@ -34,16 +34,32 @@ f_term_replace <- function(x) str_replace_all(x, c("line_name" = "Genotype", "en
 # Load data
 #######################
 
-## Example analysis
-load(file.path(result_dir, "met_mixed_model_output_example.RData"))
+# List data files
+file_list <- list.files(path = result_dir, pattern = "met_mixed_model_output.RData", full.names = TRUE)
+# Load the data and return the object
+data_list <- lapply(X = file_list, FUN = function(f) { load(f); get("met_mm_out") })
 
+# Bind
+met_mm_out <- bind_rows(data_list) %>%
+  ungroup() %>%
+  mutate(out = map(out, ~mutate(., H2 = unlist(H2)))) %>%
+  unnest(out) %>%
+  filter(! map_lgl(pred_pheno, is.null))
 
 ## Unnest the predicted phenotypic data
-pheno_blup <- met_mm_out_example %>%
+pheno_blup <- met_mm_out %>%
   unnest(pred_pheno) %>%
-  filter_at(vars(contains("nonzero")), all_vars(.)) %>%
+  # filter_at(vars(contains("nonzero")), all_vars(.)) %>%
+  # Filter for non-zero genotypic main effect predictions
+  filter(pgv_g_nonzero) %>%
   left_join(., select(trial_metadata, environment, trial)) %>%
-  mutate_at(vars(line_name, trial, environment), as.factor) 
+  mutate_at(vars(line_name, trial, environment), as.factor)
+
+
+## Prediction accuracy
+pheno_blup %>%
+  group_by(trait, nursery, management) %>%
+  summarize(acc = cor(ppv, pheno, use = "pairwise.complete.obs"))
 
 
 #######################
@@ -156,7 +172,7 @@ pheno_blup_tomodel %>%
 #######################
 
 ## Summarize error variance by locations
-met_var_comp <- met_mm_out_example %>% 
+met_var_comp <- met_mm_out %>% 
   unnest(var_comp) %>%
   filter(str_detect(component, "units")) %>%
   rename(environment = component) %>%
@@ -177,17 +193,63 @@ met_var_comp_plot <- met_var_comp1 %>%
 
 # Plot error variance by location and trait
 g_met_varR <- met_var_comp1 %>%
-  ggplot(aes(location, y = sdev, fill = trait)) +
+  ggplot(aes(location, y = sdev, fill = trait, text = environment)) +
   geom_jitter(aes(color = trait), width = 0.25) +
   # geom_boxplot(width = 0.5, alpha = 0.5) +
-  scale_y_continuous(breaks = pretty, trans = "identity") +
+  scale_y_continuous(name = expression("Residual std. dev. ("~sigma[R]~")"), breaks = pretty, trans = "identity") +
   facet_grid(trait ~ nursery, scales = "free", switch = "y") +
   theme_light() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
+## Plotly
+plotly::ggplotly(g_met_varR)
+
 # Save
 ggsave(filename = "nursery_example_location_varR.jpg", path = fig_dir, plot = g_met_varR,
        height = 6, width = 8, dpi = 500)
+
+
+
+## Plot residual SD across environments between traits
+## Plot as pairs
+resid_sd_plot_list <- met_var_comp1 %>%
+  group_by(nursery, management) %>%
+  do(pairs_plot = {
+    dat <- .
+    traits <- unique(dat$trait)
+    
+    g_plot <- dat %>% 
+      select(environment, location, year, trait, sdev) %>%
+      spread(trait, sdev) %>%
+      ggpairs(aes(color = location), columns = traits,
+              diag = list(continuous = wrap("densityDiag", alpha = 0.5))) +
+      labs(subtitle = paste(toupper(unique(dat$nursery)), str_to_title(unique(dat$management)), sep = ", ")) +
+      theme_presentation2(base_size = 10)
+    
+    # Return the plot
+    g_plot
+    
+  }) %>% ungroup()
+
+## Save plots
+for (i in seq_len(nrow(resid_sd_plot_list))) {
+  filename <- paste0(paste0(unlist(resid_sd_plot_list[i,1:2]), collapse = "_"), "_resid_var_trait_pairs.jpg")
+  ggsave(filename = filename, plot = resid_sd_plot_list$pairs_plot[[i]], path = fig_dir,
+         height = 5, width = 7, dpi = 1000)
+  
+  # Convert to plotly
+  g_plotly <- plotly::ggplotly(p = resid_sd_plot_list$pairs_plot[[i]])
+  # Save as HTML widget
+  htmlwidgets::saveWidget(widget = plotly::as_widget(g_plotly),
+                          file = file.path(fig_dir, gsub(pattern = "jpg", replacement = "html", x = filename)))
+  
+}
+
+
+
+
+
+
 
 
 
