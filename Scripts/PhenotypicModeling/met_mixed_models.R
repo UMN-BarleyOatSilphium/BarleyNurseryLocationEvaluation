@@ -137,6 +137,8 @@ for (i in seq_len(nrow(pheno_to_model))) {
   
   ## Try to fit the model; capture the output
   model_try <- try( model_stdout <- capture.output({ eval(model_exp) }), silent = TRUE )
+  # Print the output
+  print(model_stdout)
   
   ## If model try is an error, skip
   if (class(model_try) == "try-error") {
@@ -220,7 +222,7 @@ met_mm_out <- pheno_to_model %>%
   select(-data)
 
 # Save
-filename <- file.path(result_dir, paste0(c(traits, "met_mixed_model_output.RData"), collapse = "_"))
+filename <- file.path(result_dir, paste0(c(arg1, "met_mixed_model_output.RData"), collapse = "_"))
 save("met_mm_out", file = filename)
 
 
