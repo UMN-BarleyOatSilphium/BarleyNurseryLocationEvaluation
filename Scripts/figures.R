@@ -19,8 +19,6 @@ library(cowplot)
 # Color pallete for environments and line names
 term_colors <- set_names(wes_palette("Zissou1")[c(1,5)], "line_name", "environment")
 
-# Function to rename terms
-f_term_replace <- function(x) str_replace_all(x, c("line_name" = "Genotype", "environment" = "Environment"))
 
 
 #######################
@@ -67,7 +65,7 @@ g_map <- ggplot(data = north_america, aes(x = long, y = lat)) +
   geom_polygon(data = canada, aes(group = group), fill = "grey95", color = "grey50", lwd = 0.75) + # Add canada
   geom_polygon(data = usa_state, aes(group = group), fill = "grey95", color = "grey50", lwd = 0.75) +
   geom_point(data = trial_info_toplot, aes(color = nursery), size = 2.5) +
-  scale_color_viridis_d(begin = 0.2, end = 0.8, name = "Nursery", labels = toupper) +
+  scale_color_viridis_d(begin = 0.2, end = 0.8, name = NULL, labels = f_nursery_expand) +
   coord_map(projection = "bonne", lat0 = mean(ylim), xlim = xlim, ylim = ylim) +
   theme_void(base_size = 14) +
   theme(legend.position = c(0.20, 0.85), legend.background = element_rect(fill = "white"),

@@ -80,4 +80,10 @@ pos_val_traits <- c("DiastaticPower", "GrainYield", "KernelWeight", "MaltExtract
 neg_val_traits <- c("BetaGlucan", "FreeAminoNitrogen", "GrainProtein", "HeadingDate", "PlantHeight", "SolubleProteinTotalProtein")
 
 
+# Function to rename terms
+f_term_replace <- function(x) str_replace_all(x, c("line_name" = "Genotype", "environment" = "Environment"))
+
+# Function to expand nursery abbreviations
+f_nursery_expand <- function(x) c("mvn" = "Mississippi Valley Nursery", "wrn" = "Western Regional Nursery")[x]
+
 
