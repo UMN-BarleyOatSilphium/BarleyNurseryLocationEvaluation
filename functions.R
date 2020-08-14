@@ -693,9 +693,23 @@ herit.mmer <- function(x, gen.var = "u:line_name", method = c("Cullis")) {
 
 
 
+## Function to perform the logit transformation
+logitTransform <- function(x, tol = 0.001) { 
+  # Values to add to 0 or 1
+  x[x == 0] <- x[x == 0] + tol
+  x[x == 1] <- x[x == 1] - tol
+  log(x/(1-x))
+}
+
+# Exponentiate from logit transformation
+logitExp <- function(x) exp(x) / (1 + exp(x))
 
 
-
+# function for calculating angle
+angle <- function(v1, v2, degrees = TRUE) {
+  rad <- acos( sum(v1 * v2) / (sqrt(sum(v1^2)) * sqrt(sum(v2^2))) )
+  ifelse(degrees, rad * (180/pi), rad)
+}
 
 
 

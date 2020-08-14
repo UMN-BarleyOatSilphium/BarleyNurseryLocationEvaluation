@@ -11,7 +11,7 @@ packages <- c("tidyverse", "readxl", "lubridate", "reticulate")
 invisible(lapply(packages, library, character.only = TRUE))
 
 ## Source a script for relevant functions
-source(file.path(getwd(), "source_functions.R"))
+source(file.path(getwd(), "functions.R"))
 
 ## Use my package for adding spaces to strings
 library(neyhart)
@@ -39,9 +39,10 @@ data_dir <- file.path(proj_dir, "Data")
 grade_priority <- c("MALT", "FEED", "FOOD")
 
 
-########################
-# Grab pedigrees and lines from the extracted nursery data lists
-########################
+
+# Grab pedigrees and lines from the extracted nursery data lists ----------
+
+
 
 # 1. Assemble metadata
 # 2. Extract pedigrees from metadata
@@ -110,9 +111,10 @@ all_nursery_entry_metadata1 %>%
 
 
 
-########################################
-# New aliases based on this pedigree information
-########################################
+
+# New aliases based on this pedigree information --------------------------
+
+
 
 ## New aliases
 # Manually curate new aliases
@@ -236,9 +238,10 @@ all_nursery_entry_metadata2 <- read_excel(path = file.path(extr_dir, "nursery_en
   bind_rows(., mutate(new_aliases_from_pedigree, aliases = map_chr(aliases, ~paste0(., collapse = ",")) %>% ifelse(. == "", NA, .)))
 
 
-########################
-# Examine line names from the nursery trait data
-########################
+
+# Examine line names from the nursery trait data --------------------------
+
+
         
 
 ### Extract and assemble information from ALL phenotyped lines that are not in the pedigrees ###
@@ -263,9 +266,9 @@ all_nursery_entry_metadata3 <- all_nursery_entry_metadata2 %>%
 
 
 
-########################
-# Load reference information
-########################
+# Load reference information ----------------------------------------------
+
+
 
 
 ## Load the reference information from the shared drive
@@ -276,9 +279,10 @@ t3_pedigree_reference <- read_csv(file = file.path(shared_drive_dir, "Breeding/B
 
 
 
-########################
-# Load and edit nursery line name information
-########################
+
+# Load and edit nursery line name information -----------------------------
+
+
 
 
 
@@ -403,7 +407,8 @@ nursery_entry_data_referenced <- unique_line_name1 %>%
 
 
 
-###### Expand pedigrees  #######
+# Expand pedigrees --------------------------------------------------------
+
 
 # Prepare the reference df
 reference <- t3_pedigree_reference %>%
@@ -476,9 +481,10 @@ save("nursery_entry_data_expanded", "reference_data_use",
 
 
 
-###########################
-# Prepare data for PedTools
-###########################
+
+# Prepare data for PedTools -----------------------------------------------
+
+
 
 ## Combine nursery data and reference data
 entry_info_pedtools_input <- bind_rows(
@@ -580,10 +586,10 @@ write_tsv(x = entry_info_pedtools_input2,
 
 
 
+# Format for calculating coefficients of coancestry -----------------------
 
-###########################
-# Format for calculating coefficients of coancestry
-###########################
+
+
 
 # Load pedigreeTools
 library(pedigreeTools)
@@ -662,7 +668,7 @@ pedigreeToolsIn_sorted <- editPed(sire = pedigreeToolsIn$sire, dam = pedigreeToo
 
 # Merge the sorted table with the original table
 pedigree_table <- pedigreeToolsIn_sorted %>% 
-  select(name = label, par1 = sire, par2 = dam) %>% 
+  select(name = label, par1 = sire, par2 = dam, generation = gene) %>% 
   left_join(., pedtools_out3, by = c("name" = "Name", "par1" = "Parent1_edit", "par2" = "Parent2_edit"))
 
 

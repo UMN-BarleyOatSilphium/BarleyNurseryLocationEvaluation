@@ -32,7 +32,9 @@ f_term_replace <- function(x) str_replace_all(x, c("line_name" = "Genotype", "en
 ## Plot locations
 
 # Get the map data for canada
-canada <- map_data("world", "Canada")
+canada <- rnaturalearth::ne_states(country = "canada") %>%
+  tidy(x = ., region = "name_en") %>%
+  mutate(group = as.numeric(as.factor(group)))
 
 # Download map data for US by county
 usa_county <- map_data(map = "county")
@@ -62,11 +64,11 @@ ylim <- range(pretty(trial_info_toplot$lat))
 # Map
 g_map <- ggplot(data = north_america, aes(x = long, y = lat)) +
   geom_polygon(fill = "white") +
-  geom_polygon(data = canada, aes(group = group), fill = "grey85", color = "grey50", lwd = 0.75) + # Add canada
-  geom_polygon(data = usa_state, aes(group = group), fill = "grey85", color = "grey50", lwd = 0.75) +
+  geom_polygon(data = canada, aes(group = group), fill = "grey95", color = "grey50", lwd = 0.75) + # Add canada
+  geom_polygon(data = usa_state, aes(group = group), fill = "grey95", color = "grey50", lwd = 0.75) +
   geom_point(data = trial_info_toplot, aes(color = nursery), size = 2.5) +
   scale_color_viridis_d(begin = 0.2, end = 0.8, name = "Nursery", labels = toupper) +
-  coord_map(projection = "mercator", xlim = xlim, ylim = ylim) +
+  coord_map(projection = "bonne", lat0 = mean(ylim), xlim = xlim, ylim = ylim) +
   theme_void(base_size = 14) +
   theme(legend.position = c(0.20, 0.85), legend.background = element_rect(fill = "white"),
         legend.margin = margin(0.5, 0.5, 0.5, 0.5, unit = "line"))

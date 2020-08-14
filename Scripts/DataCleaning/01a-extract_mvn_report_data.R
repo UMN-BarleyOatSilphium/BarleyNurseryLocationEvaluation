@@ -8,7 +8,7 @@ packages <- c("tidyverse", "lubridate", "readxl", "pdftools")
 invisible(lapply(packages, library, character.only = TRUE))
 
 ## Source a script for relevant functions
-source(file.path(getwd(), "source_functions.R"))
+source(file.path(getwd(), "functions.R"))
 
 
 # Trait metadata

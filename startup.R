@@ -4,6 +4,7 @@
 
 library(sommer)
 library(tidyverse)
+library(lubridate)
 library(readxl)
 library(neyhart)
 library(broom)
@@ -51,12 +52,32 @@ pheno_dat <- read.csv(file = file.path(data_dir, "nursery_phenotype_data_use.csv
 
 
 # Trial metadata
-trial_metadata <- read_csv(file = file.path(data_dir, "nursery_trial_metadata_use.csv"))
+trial_metadata <- read_csv(file = file.path(data_dir, "nursery_trial_metadata_use.csv")) %>%
+  # Re-create trial variable
+  mutate(trial = paste( toupper(nursery), year, location, str_to_title(management), sep = "_" )) %>%
+  distinct()
 
 # Line metadata
 line_metadata <- read_csv(file = file.path(data_dir, "nursery_entry_metadata_use.csv"))
 
 # Pedigree relationship matrix
 load(file = file.path(data_dir, "nursery_pedigree_relmat.RData"))
+
+# Breakdown traits by agronomic or quality
+all_traits <- sort(unique(pheno_dat$trait))
+agro_traits <- c("GrainYield", "HeadingDate", "Lodging", "MaturityDate", "PlantHeight", "TestWeight")
+quality_traits <- setdiff(all_traits, agro_traits)
+
+
+## Subset more relevant traits
+traits_keep <- c("BetaGlucan", "DiastaticPower", "FreeAminoNitrogen", "GrainProtein", "GrainYield", "HeadingDate",
+                 "KernelWeight", "MaltExtract", "PlantHeight", "PlumpGrain", "SolubleProteinTotalProtein",
+                 "TestWeight")
+
+# Vector of traits where positive values are preferable
+pos_val_traits <- c("DiastaticPower", "GrainYield", "KernelWeight", "MaltExtract", "PlumpGrain", "TestWeight")
+# Vector of traits where negative values are preferable
+neg_val_traits <- c("BetaGlucan", "FreeAminoNitrogen", "GrainProtein", "HeadingDate", "PlantHeight", "SolubleProteinTotalProtein")
+
 
 
