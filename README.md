@@ -13,6 +13,6 @@ genotypic rankings from year-to-year), and iii) mega-environment
 representation (i.e. the degree to which a location represents a larger
 mega-environment).
 
-![Locations](Figures/trial_location_map.jpg)
+![Locations](PublicFigures/trial_location_map.jpg)
 
 ## Script Order
