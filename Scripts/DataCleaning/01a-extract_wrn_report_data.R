@@ -27,7 +27,7 @@ tidy_dir <- file.path(nursery_dir, "TidyData")
 extr_dir <- file.path(nursery_dir, "ExtractedData")
 
 ## Source a script for relevant functions
-source(file.path(getwd(), "source_functions.R"))
+source(file.path(getwd(), "functions.R"))
 
 
 # Change working directory to BARLEY LAB directory
@@ -48,12 +48,12 @@ pdf_files <- sort(list.files(report_dir, pattern = "WRBN", full.names = TRUE)) %
   str_subset(string = ., pattern = ".pdf")
 
 # Create an empty list to store output
-extracted_data_list <- list()
+extracted_data_list <- vector("list", length(pdf_files))
+first_null <- min(which(sapply(extracted_data_list, is.null)))
 
 
 ## Iterate over files
-for (p in seq_along(pdf_files)) {
-# for (p in seq(p, length(pdf_files))) {
+for (p in seq(first_null, length(extracted_data_list))) {
   
   
   pdf_file <- pdf_files[p]
@@ -348,7 +348,7 @@ for (p in seq_along(pdf_files)) {
   #############################
   
   # Trait pattern
-  trait_pattern <- "GRAIN YIELD|TEST WEIGHT|PLANT HEIGHT|HEADING DATE|PLUMP BARLEY|THIN BARLEY"
+  trait_pattern <- "GRAIN YIELD|TEST WEIGHT|PLANT HEIGHT|HEADING DATE|PLUMP BARLEY|THIN BARLEY|YIELD|HEIGHT"
   
   # Determine the tables to extract
   trait_content_df <- content_df %>%
@@ -548,7 +548,7 @@ for (p in seq_along(pdf_files)) {
     # Determine the min and max line based on summary values
     # Search for CV, C.V., LSD, Average, Mean
     metadata_search <- page_dat %>%
-      filter(str_detect(toupper(text), "CV|C\\.V\\.|LSD|MEAN|AVERAGE"))
+      filter(str_detect(toupper(text), "CV|C\\.V\\.|LSD|MEAN|AVERAGE|REP"))
     
     if (max(page_dat_post_col$y) >= max(metadata_search$y)) {
       min_y_threshold <- subset(page_dat, str_detect(text, last(col_data_df[[2]])), y, drop = T) + 1
@@ -621,7 +621,7 @@ for (p in seq_along(pdf_files)) {
     ## Add some wiggle room using the average half distance between rows
     col_metadata_df <- col_metadata_list[element_to_keep] %>%
       # Remove any lines in the first element that are just numbers
-      modify_at(.x = ., .at = 1, ~filter(., str_detect(text, "05", negate = TRUE))) %>%
+      modify_at(.x = ., .at = 1, ~filter(mutate(., text = str_remove_all(text, "\\.05|05")), text != "")) %>%
       reduce(., coord_join, by = "y", tol = avg_row_dist / 2, remove.NA = T) %>%
       select(-y) %>%
       # Add column names
@@ -650,7 +650,8 @@ for (p in seq_along(pdf_files)) {
     }) %>%
     rename_at(vars(1:2), tolower) %>%
     gather(location, value, -1, -2, -table_name, -trait) %>%
-    filter(!is.na(value))
+    filter(!is.na(value)) %>%
+    mutate(trait = case_when(trait == "YIELD" ~ "GRAIN YIELD", trait == "HEIGHT" ~ "PLANT HEIGHT", TRUE ~ trait))
   
   
   ## Create renaming df to rename locations
@@ -659,14 +660,15 @@ for (p in seq_along(pdf_files)) {
     # Detect duplicates
     mutate(dup = str_detect(location, "\\.[0-9]{1,}"),
            location1 = map2_chr(location, dup, ~ifelse(.y, str_remove_all(.x, "\\.[0-9]{1,}"), .x)),
-           location_new = map(location1, ~str_subset(string = unique(station_info_df$location), pattern = .))) %>%
+           location_new = map(location1, ~str_subset(string = unique(station_info_df$location), pattern = str_to_title(.)))) %>%
     # Filter out length 0 vectors
     filter(map_lgl(location_new, ~length(.) > 0)) %>%
     unnest(location_new) %>%
     # Add dup number back in
     mutate(location_new = map2_chr(location, location_new, 
                                    ~ifelse(str_detect(.x, "\\.[0-9]{1,}"), paste0(.y, str_extract(.x, "\\.[0-9]{1,}")), .y))) %>%
-    select(location, location_new)
+    select(location, location_new) %>%
+    mutate(location_new = ifelse(location_new == "Mcville", "McVille", location))
   
   
   ## Combine dfs and rename locations
@@ -690,7 +692,8 @@ for (p in seq_along(pdf_files)) {
         select(-starts_with("X")) %>%
         rename_all(~str_remove_all(string = ., pattern = "[:punct:]|[0-9]*") %>% str_trim())
 
-    })
+    }) %>% mutate(trait = case_when(trait == "YIELD" ~ "GRAIN YIELD", trait == "HEIGHT" ~ "PLANT HEIGHT", TRUE ~ trait))
+    
       
 
   
@@ -698,8 +701,9 @@ for (p in seq_along(pdf_files)) {
   ## Assemble information in a list
   #############################
   
-  extracted_data_list[[basename(pdf_file)]] <- list(
-    filename = basename(pdf_file), year = report_year, 
+  extracted_data_list[[p]] <- list(
+    filename = basename(pdf_file), 
+    year = report_year, 
     station_info = station_info_df,
     pedigree = pedigree_info_df, 
     trait_data = trait_data_df1,
@@ -728,6 +732,7 @@ date_formats <- c("mdy", "%B %d", "%B %d, %Y", "j", "%b %d")
 
 wrn_excel_report_files <- list.files(agro_dir, pattern = "WR", full.names = TRUE) %>%
   str_subset(., "\\~\\$", negate = TRUE)
+wrn_excel_report_files_list <- vector("list", length(wrn_excel_report_files))
 
 # Iterate over the files
 for (i in seq_along(wrn_excel_report_files)) {
@@ -781,7 +786,7 @@ for (i in seq_along(wrn_excel_report_files)) {
   ### Trait data ###
   # Sheets with data have a location, state pattern to the name of the sheet
   trait_data_sheets <- str_subset(string = file_sheets, ", ")
-  trait_data_list <- meta_data_list <- list()
+  trait_data_list <- meta_data_list <- sumstat_list <- list()
   
   # Iterate over these sheets
   for (p in seq_along(trait_data_sheets)) {
@@ -838,7 +843,7 @@ for (i in seq_along(wrn_excel_report_files)) {
     
     # Select columns that match these patterns
     trait_cols <- unit_pattern %>%
-      map(~{y <- .; which(map_lgl(trait_data_raw_p2[-1], ~any(str_detect(., y), na.rm = TRUE))) }) %>%
+      map(~{y <- .; which(map_lgl(trait_data_raw_p2[1:5,-1], ~any(str_detect(., y), na.rm = TRUE))) }) %>%
       # If that column is mostly NA, skip
       map(function(y) map(y, ~ifelse( mean(is.na(trait_data_raw_p2[-1][[.]])) > 0.8, NA, .) )) %>%
       map_dbl(~ifelse(any(is.na(.x)), NA, first(.))) %>%
@@ -869,32 +874,72 @@ for (i in seq_along(wrn_excel_report_files)) {
     # Add to data list
     trait_data_list[[p]] <- trait_data_df
     
+    
+    ## Gather summary statistics
+    # Find the rows with the summary statistics
+    
+    sumstat_search_rows <- str_which(toupper(trait_data_raw_p[[1]]), "CV|C\\.V\\.|LSD|MEAN|AVERAGE|REP")
+    # Gather the summary statistics
+    sumstats <- trait_data_raw_p[sumstat_search_rows, , drop = FALSE] %>%
+      select(c(statistic = 1, trait_cols + 2)) %>%
+      filter_at(vars(-statistic), any_vars(!is.na(.))) %>%
+      # Parse
+      mutate_all(str_trim) %>%
+      mutate_at(vars(-statistic), parse_number) %>%
+      filter_at(vars(-statistic), any_vars(!is.na(.))) %>%
+      select_if(~!all(is.na(.)))
+      
+    sumstat_list[[p]] <- sumstats
+    
   }
     
+  
+  # Get the summary statistics
+  sumstat_combine <- sumstat_list %>%
+    subset(!sapply(X = ., FUN = is.null)) %>%
+    map(~{
+      
+      ## Reshape
+      gather(.x, trait, value, -1) %>% 
+        spread(1, value) %>% 
+        rename_all(~str_remove_all(., "[:punct:]")) %>%
+        rename_all(str_trim) %>%
+        rename_all(make.names) %>%
+        select(-starts_with("X")) %>%
+        rename_all(~str_remove_all(string = ., pattern = "[:punct:]|[0-9]*") %>% str_trim())
+      
+    })
   
   ## Bind rows for metadata, traits, etc.
   metadata_combine <- bind_rows(meta_data_list) %>%
     mutate_all(str_trim) %>%
+    mutate(summary_stats = sumstat_combine) %>%
     # Reformat dates
     mutate_at(vars(contains("date")), ~parse_date_time(., orders = date_formats) %>% `year<-`(., as.numeric(report_year))) %>%
     mutate_if(is.POSIXct, as.character)
 
   trait_data_combine <- bind_rows(trait_data_list)
+  
+  trait_metadata <- metadata_combine %>% 
+    unnest() %>% 
+    rename(Replications = Reps, PlantingDate = planting_date, HarvestDate = harvest_date)
+
     
   ## Add data to the extracted data list
-  extracted_data_list[[basename(filename)]] <- list(
+  wrn_excel_report_files_list[[i]] <- list(
     filename = basename(filename),
     year = report_year,
-    station_info = metadata_combine,
+    station_info = select(metadata_combine, -summary_stats),
     pedigree = pedigree_info_df,
-    trait_data = trait_data_combine
+    trait_data = trait_data_combine,
+    trait_metadata = trait_metadata
   )
   
 }
 
 
-wrn_extracted_data_list <- extracted_data_list
-
+# Append to the list
+wrn_extracted_data_list <- c(wrn_extracted_data_list, wrn_excel_report_files_list)
 
 save("wrn_extracted_data_list", file = file.path(extr_dir, "wrn_extracted_metadata.RData"))
 
@@ -903,12 +948,11 @@ save("wrn_extracted_data_list", file = file.path(extr_dir, "wrn_extracted_metada
 ## Clean up the results
 #############################
 
-## Read in PDF text to aid in cleaning
-all_pdf_text <- map(pdf_files, ~pdf_text(pdf = .) %>% str_to_upper())
-
 # Load the data
 load(file.path(extr_dir, "wrn_extracted_metadata.RData"))
 
+## Date formats for parsing
+date_formats <- c("mdy", "%B %d", "%B %d, %Y", "j", "%b %d")
 
 
 #### Pedigree
@@ -1042,18 +1086,32 @@ pedigree_distinct_cols3 %>%
 write_csv(x = pedigree_distinct_cols3, path = file.path(extr_dir, "wrn_extracted_entry_metadata_edited.csv"))
 
 
+## Parse nursery information for the trial metadata
+wrn_extracted_data_list <- wrn_extracted_data_list %>%
+  map(~modify_at(.x, "trait_metadata", ~mutate_at(.x, vars(matches("tablename")), list(nursery = ~paste0(str_trim(str_extract(., "WESTERN REGIONAL [A-Z ]* BARLEY")), " NURSERY")))))
 
 #### Station information
 
 ## Load location information
 location_info_df <- wrn_extracted_data_list %>%
-  map(`[`, c("year", "station_info")) %>%
+  map(`[`, c("filename", "year", "station_info", "trait_metadata")) %>%
   transpose() %>%
   # Add year to the df
-  pmap(~mutate(.y, year = .x)) %>%
-  imap_dfr(~mutate(.x, file = .y)) %>%
-  select(location, state, year, contains("date"), nursery, raw, file)
-
+  pmap_dfr(~{
+    x1 <- mutate(..3, year = ..2, file = ..1)
+    if (any(grepl(pattern = "Date", x = names(..4)))) {
+      y1 <- left_join(x = distinct_at(..4, vars(location, contains("nursery"))), 
+                      y = distinct_at(..4, vars(location, contains("nursery"), contains("Date"))) %>% 
+                        filter_at(vars(contains("Date")), any_vars(!is.na(.))) )
+      left_join(x1, y1)
+    } else {
+      x1
+    }  }) %>%
+  mutate_at(., vars(contains("date")), ~parse_date_time(., orders = date_formats) %>% `year<-`(., as.numeric(year))) %>%
+  mutate_at(., vars(contains("date")), as.character) %>%
+  mutate(planting_date = coalesce(PlantingDate, planting_date), harvest_date = coalesce(HarvestDate, harvest_date)) %>%
+  select(-HarvestDate, -PlantingDate)
+  
 # Save this
 write_csv(x = location_info_df, path = file.path(extr_dir, "wrn_extracted_location_metadata.csv"))
 
@@ -1088,6 +1146,27 @@ write_csv(x = location_info_df2, path = file.path(extr_dir, "wrn_extracted_stati
 
 
 
+# Pull out the trait-location metadata
+trait_station_metadata <- wrn_extracted_data_list %>%
+  lapply("[", c("year", "filename", "trait_metadata")) %>%
+  transpose() %>%
+  pmap(~mutate(..3, report = str_remove(..2, "\\.[a-z]*$"), year = ..1)) %>%
+  map(~mutate_at(.x, vars(which(names(.x) %in% c("Replications", "LSD", "CV") & sapply(.x, inherits, "character"))), parse_number)) %>%
+  map(~mutate_at(.x, vars(contains("date")), ~parse_date_time(., orders = date_formats) %>% `year<-`(., as.numeric(year)))) %>%
+  map_df(~mutate_if(.x, is.character, parse_guess)) %>%
+  mutate(trait = neyhart::str_add_space(trait) %>% str_to_title() %>% str_remove_all(., " "),
+         management = ifelse(str_detect(nursery, "DRYLAND"), "rainfed", "irrigated"),
+         nursery = "wrn") %>%
+  mutate_at(vars(contains("date")), as.character) %>%
+  # Select columns
+  select(report, location, year, nursery, management, trait, planting_date = PlantingDate, harvest_date = HarvestDate,
+         lsd = LSD, replications = Replications) %>%
+  # If management is missing, assume irrigated
+  mutate(management = ifelse(is.na(management), "irrigated", management))
+
+
+# Save
+write_csv(x = trait_station_metadata, path = file.path(extr_dir, "wrn_extracted_trial_location_metadata.csv"))
 
 
 

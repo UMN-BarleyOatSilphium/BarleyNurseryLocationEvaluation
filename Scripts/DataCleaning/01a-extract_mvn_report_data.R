@@ -161,7 +161,7 @@ for (p in seq_along(pdf_files)) {
   
   # Get column coordinates
   page_dat <- pdf_dat[[plot_type_page]]
-  col_coord <- filter(page_dat, str_detect(text, "LOCATION|\\#|REPS|SOWN|KG|METERS|HARVESTED|ROWS"))
+  col_coord <- filter(page_dat, str_detect(text, "LOCATION|\\#|REPS|SOWN|KG/|BU/|METERS|HARVESTED|ROWS"))
   
   # If more than one harvested, choose second
   col_coord1 <- anti_join(
@@ -184,7 +184,9 @@ for (p in seq_along(pdf_files)) {
   # Filter the rows beyond the columns
   page_dat_post_col <- page_dat %>% 
     # Move past the columns
-    filter(y > max(unique(col_coord1$y)))
+    filter(y > max(unique(col_coord1$y))) %>%
+    # Remove rows with DATA|submitted|abandoned
+    filter(str_detect(text, "DATA|SUBMITTED|ABANDONED|NOT", negate = TRUE))
   
   
   ## Iterate over columns
@@ -253,6 +255,9 @@ for (p in seq_along(pdf_files)) {
   # Reorder the names, too
   col_data_names <- col_data_names[col_orders]
   
+  col_data_rename <- c("location", "sown", "harvested", "replications" = "reps", "meters_harvested" = "meters", "cm_bet_rows" = "rows", 
+                       "lsd_kgha" = "kgha", "lsd_bua" = "bua")
+  
   ## Merge by y
   ## Use coordinate join with a tolerance for the y value
   plot_type_df <- reduce(col_data_list, coord_join, by = "y", tol = 0) %>%
@@ -263,17 +268,18 @@ for (p in seq_along(pdf_files)) {
     rename_all(~str_remove_all(., "[:punct:]")) %>%
     # Lowercase and select important
     rename_all(tolower) %>%
-    select(location, sown, harvested) %>%
+    select(col_data_rename[col_data_rename %in% names(.)]) %>%
     ## Parse dates
     mutate_at(vars(sown, harvested), ~parse_date_time(x = ., orders = c("%m %d")) %>% 
                 `year<-`(., as.numeric(report_year)) %>% as.character()) %>%
+    mutate_at(vars(which(sapply(., inherits, "character") & ! names(.) %in% c("location", "sown", "harvested"))), parse_number) %>%
     # Rename
     rename(planting_date = sown, harvest_date = harvested)
   
-  
+
   ## Order based on levels in the station_df, assign numbers
   station_plot_df <- plot_type_df %>%
-    filter(!is.na(planting_date)) %>%
+    filter_at(vars(-location), any_vars(!is.na(.))) %>%
     mutate(location = factor(location, levels = levels(station_df1$location))) %>%
     arrange(location) %>%
     filter(!is.na(location)) %>%
@@ -729,6 +735,7 @@ for (p in seq_along(pdf_files)) {
 
 
 
+
 ## Read in manually curated 2018 pedigree information
 ped_mvn_2018 <- read_excel(file.path(extr_dir, "mvn2018_pedigree_manual.xlsx"), col_types = "text") %>%
   rename_all(tolower) %>%
@@ -864,6 +871,9 @@ for (i in seq_along(yield_pages)) {
 
 ## Unlist the location names and assign numbers
 location_df <- tibble(location = unlist(location_name_list), environment_number = seq_along(location))
+
+
+
 
 
 
@@ -1136,18 +1146,18 @@ location_info_df1 <- location_info_df %>%
 
 ## Pull the station info data and assemble into a single df
 station_info_df <- map(mvn_extracted_data_list, "station_info") %>% 
+  subset(!sapply(., is.null)) %>%
   imap_dfr(~mutate(.x, file = .y)) %>% 
-  select(number, location, planting_date, harvest_date, file) %>% 
   mutate(report = str_remove(file, ".pdf") %>% str_replace(., " ", "_"),
          location = str_to_title(location)) %>%
   select(-file) %>%
   as_tibble() %>%
-  mutate_at(vars(contains("date")), ymd)
+  mutate_at(vars(contains("date")), ymd) %>%
+  mutate(location = ifelse(location == "Carrington", "Carrington1", location))
 
 ## Add the planting/harvest dates (where applicable) to the location information df
 location_info_df2 <- location_info_df1 %>%
-  left_join(., station_info_df) %>%
-  select(report, location, environment_number, contains("date"))
+  left_join(., station_info_df)
 
 ## Save csv
 write_csv(x = location_info_df2, path = file.path(extr_dir, "mvn_extracted_station_info.csv"))

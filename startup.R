@@ -52,12 +52,12 @@ pheno_dat <- read.csv(file = file.path(data_dir, "nursery_phenotype_data_use.csv
 
 
 # Trial metadata
-trial_metadata <- read_csv(file = file.path(data_dir, "nursery_trial_metadata_use.csv")) %>%
-  # Re-create trial variable
-  mutate(trial = paste( toupper(nursery), year, location, str_to_title(management), sep = "_" )) %>%
-  distinct()
+trial_metadata <- read_csv(file = file.path(data_dir, "nursery_trial_metadata_use.csv"))
 
-# Line metadata
+# Trial trait metadata
+trial_trait_metadata <- read_csv(file = file.path(data_dir, "nursery_trial_trait_metadata_use.csv"))
+
+# Line metadata 
 line_metadata <- read_csv(file = file.path(data_dir, "nursery_entry_metadata_use.csv"))
 
 # Pedigree relationship matrix
@@ -71,11 +71,10 @@ quality_traits <- setdiff(all_traits, agro_traits)
 
 ## Subset more relevant traits
 traits_keep <- c("BetaGlucan", "DiastaticPower", "FreeAminoNitrogen", "GrainProtein", "GrainYield", "HeadingDate",
-                 "KernelWeight", "MaltExtract", "PlantHeight", "PlumpGrain", "SolubleProteinTotalProtein",
-                 "TestWeight")
+                 "MaltExtract", "PlantHeight", "PlumpGrain", "SolubleProteinTotalProtein",  "TestWeight")
 
 # Vector of traits where positive values are preferable
-pos_val_traits <- c("DiastaticPower", "GrainYield", "KernelWeight", "MaltExtract", "PlumpGrain", "TestWeight")
+pos_val_traits <- c("DiastaticPower", "GrainYield", "MaltExtract", "PlumpGrain", "TestWeight")
 # Vector of traits where negative values are preferable
 neg_val_traits <- c("BetaGlucan", "FreeAminoNitrogen", "GrainProtein", "HeadingDate", "PlantHeight", "SolubleProteinTotalProtein")
 
@@ -86,4 +85,12 @@ f_term_replace <- function(x) str_replace_all(x, c("line_name" = "Genotype", "en
 # Function to expand nursery abbreviations
 f_nursery_expand <- function(x) c("mvn" = "Mississippi Valley Nursery", "wrn" = "Western Regional Nursery")[x]
 
+# Rename fitness components
+f_fitness_comp_replace <- function(x) 
+  str_replace_all(x, c("varY" = "Precision", "repAvg" = "Repeatability", "reprAvg" = "Representativeness"))
+
+# Function to rename traits
+f_trait_rename <- function(x) str_replace(str_add_space(x), "Protein Total", "Protein/Total")
+# Function to abbreviate traits
+f_trait_abbr <- function(x) str_replace(abbreviate(f_trait_rename(x), 2), "SPP", "S/T")
 

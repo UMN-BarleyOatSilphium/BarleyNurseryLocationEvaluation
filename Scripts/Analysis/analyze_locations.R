@@ -21,6 +21,7 @@ library(cowplot)
 
 
 
+
 # Color pallete for environments and line names
 term_colors <- set_names(paletteer_d(package = "wesanderson", palette = "Zissou1")[c(1,5)], "line_name", "environment")
 
@@ -40,6 +41,11 @@ min_env <- 3
 
 load(file.path(result_dir, "phenotypic_analysis_asreml_fa.RData"))
 
+# Remove WRN rainfed
+analysis_models_fa <- analysis_models_fa %>%
+  filter(!(nursery == "wrn" & management == "rainfed"),
+         trait %in%  traits_keep)
+
 
 ## Extract variance components from the models and tidy
 var_comp_tidy <- analysis_models_fa %>% 
@@ -54,15 +60,13 @@ var_comp_tidy <- analysis_models_fa %>%
          environment = ifelse(is.na(environment), "all", environment)) %>%
   # Add location and year data
   left_join(., distinct(trial_metadata, trial, location, year, environment, nursery, management)) %>%
-  select(trait, nursery, management, trial, environment, location, year, type, component, std.error) %>%
-  arrange(nursery, management, trait, location, year) %>%
-  # Remove any locations with less than x environments
-  group_by(nursery, management, trait, location) %>% filter(n_distinct(environment) >= min_env) %>% ungroup()
+  select(trait, nursery, management, trial, environment, location, year, varP, type, component, std.error) %>%
+  arrange(nursery, management, trait, location, year)
 
 ## Create matrices of the loadings, residual genetic variance, and residual variance
 var_comp_matrices <- var_comp_tidy %>%
-  select(trait:management, environment, type, component) %>%
-  group_by(trait, nursery, management) %>%
+  select(trait:management, environment, varP, type, component) %>%
+  group_by(trait, nursery, management, varP) %>%
   nest() %>%
   ## Loadings
   mutate(Lambda = map(data, ~filter(.x, str_detect(type, "fa"))),
@@ -78,19 +82,30 @@ var_comp_matrices <- var_comp_tidy %>%
   mutate(Rho = map2(Lambda, Psi, ~tcrossprod(.x) + .y),
          # D matrix
          D = map(Rho, ~`dimnames<-`(x = diag(diag(.x)^(-0.5)), value = dimnames(.x)))) %>%
-  select(-data)
+  select(-data) %>%
+  # Standardize the variance estimates
+  mutate_at(vars(Psi, varR, Rho), list(scaled = ~map2(., varP, ~.x / .y)))
+  
 
 
 ## Calculate the proportion of genetic variance explained by loadings vs residual genetic variance
 loadings_prop_var <- var_comp_matrices %>%
   mutate(prop_var = map2(Psi, Rho, ~{
     # Variance explained by residual genetic variance
-    var_prop_resid <- mean(diag(.x) / diag(.y))
-    # Return tibble
-    tibble(loadings_var_prop = 1 - var_prop_resid, resid_var_prop = var_prop_resid)
-  })) %>% unnest(prop_var) %>%
-  select(trait, nursery, management, contains("var_prop"))
-  
+    tibble(environment = row.names(.x), resid_var_prop = diag(.x) / diag(.y)) %>%
+      mutate(loadings_var_prop = 1 - resid_var_prop)
+  })) %>% unnest(prop_var)
+
+
+
+
+
+# A dataframe of locations with at least min_env environments of observations
+candidate_locations <- var_comp_tidy %>% 
+  group_by(nursery, management, trait, location) %>% 
+  filter(n_distinct(environment) > min_env) %>% 
+  ungroup() %>% 
+  distinct(nursery, management, trait, location)
 
 
 
@@ -116,6 +131,14 @@ loadings_scores_df <- left_join(var_comp_matrices, gen_score_matrix) %>%
 
 
 
+## Comparison of pedigree/non-pedigree models using AIC
+pedigree_model_comparison <- analysis_models_fa %>%
+  select(nursery, trait, contains("aic"))
+
+
+
+
+
 
 # Cluster environments using FA loadings ----------------------------------
 
@@ -127,6 +150,7 @@ nursery_mega_environment_output <- loadings_scores_df %>%
     tr <- row$trait
     nur <- row$nursery
     mgmt <- row$management
+  
     
     ## Example loadings
     .x <- row$loadings[[1]] %>%
@@ -178,7 +202,7 @@ nursery_mega_environment_output <- loadings_scores_df %>%
       filter(intersect) %>%
       # Create coordinates for the segments
       mutate(fa2_end = fa1_perp * slope_perp, fa1_end = fa1_perp, fa1 = 0, fa2 = 0, 
-             mega_environment = paste0("ME", seq(nrow(.)))) %>%
+             mega_environment = LETTERS[seq(nrow(.))]) %>%
       # Select relevant columns
       select(mega_environment, term, slope = slope_perp, fa1, fa2, fa1_end, fa2_end)
     
@@ -190,12 +214,24 @@ nursery_mega_environment_output <- loadings_scores_df %>%
     me_delineation1 <- me_delineation %>%
       mutate(angle = map2_dbl(fa1_end, fa2_end, ~angle(v1 = c(.x, .y), v2 = c(0, 1000))),
              angle = ifelse(sign(fa1_end) == -1, 360 - angle, angle)) %>%
+      arrange(angle) %>%
       bind_rows(., slice(., 1)) %>%
       mutate(angle_end = c(angle[-1], last(angle))) %>%
       head(-1) %>%
       select(mega_environment, angle, angle_end) %>%
-      mutate(angle_end = ifelse(angle_end < angle, 360 + angle_end, angle_end))
+      mutate(check = angle_end < angle)
     
+    # Add additional range to capture angles close to 360
+    if (any(me_delineation1$check)) {
+      me_delineation1 <- add_row(me_delineation1, angle = 0, angle_end = subset(me_delineation1, check, angle_end, drop = TRUE),
+                                 mega_environment = subset(me_delineation1, check, mega_environment, drop = TRUE),
+                                 check = FALSE) %>%
+        mutate(angle_end = ifelse(check, 360, angle_end))
+      
+    }
+    
+    
+
     # Find the angle of each environment vector
     environment_me_assign <- filter(.x1, type == "environment") %>%
       mutate(angle = map2_dbl(fa1, fa2, ~angle(v1 = c(.x, .y), v2 = c(0, 1000))),
@@ -209,7 +245,10 @@ nursery_mega_environment_output <- loadings_scores_df %>%
     me_delineation2 <- me_delineation1 %>%
       left_join(., summarize(group_by(environment_me_assign, mega_environment), nEnv = n()), by = "mega_environment") %>%
       mutate(nEnv = ifelse(is.na(nEnv), 0, nEnv),
-             me_annotation = paste0(mega_environment, " (n = ", nEnv, ")"),
+             nEnvSort = ifelse(nEnv == 0, 0, 1),
+             mega_environment1 = fct_reorder2(mega_environment, angle, nEnvSort, .desc = TRUE),
+             mega_environment1 = paste0("ME", as.numeric(mega_environment1)),
+             me_annotation = paste0(mega_environment1, " (n = ", nEnv, ")"),
              me_annotation = as.factor(me_annotation))
     
     
@@ -227,7 +266,7 @@ nursery_mega_environment_output <- loadings_scores_df %>%
       geom_text(data = extreme_genotypes, aes(label = term), size = 2.5, hjust = "inward", vjust = "inward") +
       geom_segment(data = me_delineation, aes(x = fa1, y = fa2, xend = fa1_end, yend = fa2_end), 
                    lty = 2, inherit.aes = FALSE) +
-      scale_color_discrete(name = NULL, drop = FALSE) +
+      scale_color_discrete(name = NULL) +
       scale_x_continuous(name = "Loading 1", breaks = pretty) +
       scale_y_continuous(name = "Loading 2", breaks = pretty) +
       labs(subtitle = paste0(c(str_add_space(tr), toupper(nur), str_to_title(mgmt)), collapse = ", ")) +
@@ -236,8 +275,8 @@ nursery_mega_environment_output <- loadings_scores_df %>%
             legend.key.height = unit(0.5, "line"), legend.background = element_rect(fill = alpha("white", 0)))
     
     ## Edit the plot
-    if (nlevels(dat_toplot$me_annotation) > 4) {
-      suppressMessages(g_me <- g_me + scale_color_discrete(name = NULL, drop = FALSE, guide = guide_legend(ncol = 2)))
+    if (nlevels(droplevels(dat_toplot$me_annotation)) > 4) {
+      suppressMessages(g_me <- g_me + scale_color_discrete(name = NULL, guide = guide_legend(ncol = 2)))
       
     }
     
@@ -246,29 +285,6 @@ nursery_mega_environment_output <- loadings_scores_df %>%
     
   }) %>% ungroup()
 
-
-## Save plots
-nursery_mega_environment_output_toplot <- nursery_mega_environment_output %>%
-  mutate(delim = paste(nursery, management, sep = "_")) %>%
-  split(.$delim)
-
-## Iterate and save plots
-for (nursery_output in nursery_mega_environment_output_toplot) {
-  
-  # Create a filename
-  filename <- paste0("mega_environments_", unique(nursery_output$nursery), "_",
-                     unique(nursery_output$management), ".jpg")
-  # Create a plot grid
-  g_plot_grid <- plot_grid(plotlist = nursery_output$plot, ncol = 4)
-  # Number of rows
-  plot_rows <- ceiling(nrow(nursery_output) / 4)
-  
-  # Save
-  ggsave(filename = filename, plot = g_plot_grid, path = fig_dir, width = 16, height = plot_rows * 4,
-         dpi = 1000)
-  
-  
-}
 
 
 
@@ -279,7 +295,7 @@ environmental_loadings <- nursery_mega_environment_output %>%
   filter(type == "environment") %>% 
   rename(environment = term) %>% 
   left_join(distinct(trial_metadata, environment, location)) %>% 
-  select(trait, nursery, management, environment, mega_environment, me_annotation, location, fa1, fa2)
+  select(trait, nursery, management, environment, mega_environment = mega_environment1, me_annotation, location, fa1, fa2)
 
 average_me_loadings <- environmental_loadings %>%
   group_by(nursery, management, trait, mega_environment, me_annotation) %>%
@@ -287,62 +303,10 @@ average_me_loadings <- environmental_loadings %>%
   ungroup()
 
 average_location_loadings <- environmental_loadings %>%
+  inner_join(., candidate_locations)  %>%
   group_by(nursery, management, trait, location) %>%
   summarize(fa1 = mean(fa1), fa2 = mean(fa2), n = n()) %>%
   ungroup()
-
-## Edit each plot to include the average ME axis
-nursery_mega_environment_output2 <- nursery_mega_environment_output %>%
-  left_join(., nest(group_by(average_me_loadings, nursery, management, trait), .key = "average_me_loadings")) %>%
-  left_join(., nest(group_by(average_location_loadings, nursery, management, trait), .key = "average_location_loadings"))
-
-
-## Plot the average ME axis
-nursery_mega_environment_output3 <- nursery_mega_environment_output2 %>%
-  mutate(plot1 = pmap(list(plot, average_me_loadings, average_location_loadings), ~{
-    g <- ..1
-    me_df <- ..2
-    loc_df <- ..3
-    
-    # Create an annotation for locations
-    loc_df1 <- mutate(loc_df, annotation = paste0(abbreviate(location), " (", n, ")"))
-    
-    ## Remove the polygon
-    g1 <- g
-    g1$layers[3:5] <- NULL
-    
-    # Add average ME and location axes; return the plot
-    g1 + 
-      geom_segment(data = me_df, aes(x = 0, y = 0, xend = fa1, yend = fa2, color = me_annotation), lwd = 1) +
-      geom_segment(data = loc_df1, aes(x = 0, y = 0, xend = fa1, yend = fa2), lwd = 0.25) +
-      geom_label(data = loc_df1, aes(x = fa1, y = fa2, label = annotation), size = 2, hjust = "outward", vjust = "outward",
-                 fill = alpha("white", 0.7), label.size = NA)
-    
-  }))
-    
-
-## Save plots
-nursery_mega_environment_output_toplot <- nursery_mega_environment_output3 %>%
-  mutate(delim = paste(nursery, management, sep = "_")) %>%
-  split(.$delim)
-   
-## Iterate and save plots
-for (nursery_output in nursery_mega_environment_output_toplot) {
-  
-  # Create a filename
-  filename <- paste0("mega_environment_location_axes_", unique(nursery_output$nursery), "_",
-                     unique(nursery_output$management), ".jpg")
-  # Create a plot grid
-  g_plot_grid <- plot_grid(plotlist = nursery_output$plot1, ncol = 4)
-  # Number of rows
-  plot_rows <- ceiling(nrow(nursery_output) / 4)
-  
-  # Save
-  ggsave(filename = filename, plot = g_plot_grid, path = fig_dir, width = 16, height = plot_rows * 4,
-         dpi = 1000)
-  
-  
-}
 
 
 ## For each location, calculate the angle between the average location axis and
@@ -352,8 +316,8 @@ for (nursery_output in nursery_mega_environment_output_toplot) {
 
 # First combine data
 nursery_mega_environment_output4 <- environmental_loadings %>% 
-  left_join(., rename_at(average_me_loadings, vars(contains("fa")), ~paste0("me_", .))) %>% 
-  left_join(., rename_at(average_location_loadings, vars(contains("fa")), ~paste0("loc_", .)))
+  inner_join(., rename_at(average_me_loadings, vars(contains("fa")), ~paste0("me_", .))) %>% 
+  inner_join(., rename_at(average_location_loadings, vars(contains("fa")), ~paste0("loc_", .)))
 
 # Calculate angles
 nursery_mega_environment_angles <- nursery_mega_environment_output4 %>%
@@ -389,63 +353,41 @@ location_me_representativeness <- nursery_environment_angles_summary %>%
   group_by(nursery, management, trait, location) %>%
   slice(1) %>%
   group_by(nursery, management, trait) %>%
-  nest(.key = representitiveness) %>%
-  mutate(representitiveness = map(representitiveness, ~arrange(.x, mega_environment, location_me_angles, maa)))
+  nest(.key = representativeness) %>%
+  mutate(representativeness = map(representativeness, ~arrange(.x, mega_environment, location_me_angles, maa)),
+         representativeness = map(representativeness, ~mutate(.x, mega_environment = paste0("ME", as.numeric(as.factor(mega_environment))))))
 
 
 
 
-# Summarize reliability to determine discriminatory locations ----------
+# Summarize reliability to determine discriminatory locations -----------------
 
 
 # Reliability will be measured using the estimated residual variance,
 
 
-## Plot residuals variance by location and trait
-varR_plot_list <- var_comp_tidy %>% 
-  mutate(location_abbr = abbreviate(location)) %>%
-  filter(type == "varR") %>% 
-  group_by(trait, nursery, management) %>%
-  do(plot = {
-    df <- .
-    # Refactor
-    df %>% 
-      mutate_at(vars(location, location_abbr), ~fct_reorder(., component, median)) %>%
-      # plot
-      ggplot(., aes(x = location_abbr, y = log10(component))) + 
-      geom_jitter(width = 0.25, color = "grey85", size = 0.5) +
-      geom_boxplot(alpha = 0, outlier.shape = NA) +
-      scale_y_continuous(name = expression(log10(italic(sigma[R]^2)))) +
-      scale_x_discrete(name = "Location") +
-      # facet_grid(trait ~ nursery, scales = "free_x", space = "free_x", switch = "y",
-      #            labeller = labeller(nursery = toupper, trait = str_add_space)) +
-      facet_grid(trait ~ ., scales = "free_x", space = "free_x", switch = "y",
-                 labeller = labeller(nursery = toupper, trait = str_add_space)) +
-      labs(subtitle = paste0(c(str_add_space(unique(df$trait)), toupper(unique(df$nursery)), str_to_title(unique(df$management))), 
-                             collapse = ", ")) +
-      theme_genetics(10) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1), strip.placement = "outside")
-  }) %>% ungroup()
 
-## Save plots
-varR_plot_list %>%
-  split(.$nursery) %>%
-  imap(~{
 
-  ## Modify plots
-  plot_list1 <- map(.x$plot, ~. + theme(axis.title.x = element_blank()))
-  
-  # Combine plots
-  g_plot <- add_sub(plot = plot_grid(plotlist = plot_list1, ncol = 4), label = "Location")
-  ggsave(filename = paste0("varR_boxplot_by_location_", .y, ".jpg"), plot = g_plot, path = fig_dir,
-         height = 3 * ceiling(length(plot_list1) / 4), width = 12, dpi = 1000)
-  
-})
+## Example differences in LSD based on within-trial variance
+var_comp_tidy %>% 
+  inner_join(., candidate_locations) %>%
+  filter(type == "varR") %>%
+  left_join(., summarize(group_by(pheno_dat, trait, trial), n = n())) %>%
+  mutate(LSD = qt(p = 0.05 / 2, df = n - 1, lower.tail = FALSE) * (sqrt(2 * component))) %>%
+  group_by(trait, location) %>%
+  # group_by(nursery, management, trait, location) %>%
+  summarize_at(vars(component, LSD), mean) %>%
+  summarize_at(vars(component, LSD), list(~min, ~max, ~mean)) %>%
+  as.data.frame()
+
+
+
  
 
-
+ 
 ## Calculate the average reliabilty per location
 location_avg_reliability <- var_comp_tidy %>%
+  inner_join(., candidate_locations) %>%
   filter(type == "varR") %>% 
   group_by(trait, nursery, management, location) %>%
   summarize(varR_mean = mean(component)) %>%
@@ -464,55 +406,11 @@ location_correlations <- env_cor_matrix %>%
   # Add locations
   left_join(., distinct(trial_metadata, environment, location), by = c("environment.x" = "environment")) %>%
   left_join(., distinct(trial_metadata, environment, location), by = c("environment.y" = "environment")) %>%
+  inner_join(., candidate_locations, by = c("trait", "nursery", "management", "location.x" = "location")) %>%
+  inner_join(., candidate_locations, by = c("trait", "nursery", "management", "location.y" = "location")) %>%
   group_by(nursery, management, trait) %>% nest(.key = "correlations")
   
 
-# Plot
-location_cor_plot_list <- location_correlations %>%
-  group_by(nursery, management, trait) %>%
-  do(plot = {
-    row <- .
-    
-    nur <- row$nursery
-    mgmt <- row$management
-    tr <- row$trait
-    
-    df <- row$correlations[[1]] %>%
-      # Filter for matching xy locations
-      filter(location.x == location.y) %>%
-      mutate(delim = map2_chr(environment.x, environment.y, ~paste0(sort(c(.x, .y)), collapse = ":"))) %>%
-      filter(!duplicated(delim)) %>%
-      select(-delim)
-    
-    
-    # Reorder location factors - create annotation
-    df %>%
-      mutate(location_abbr = paste0(abbreviate(location.x, 4), "."),
-             location_abbr = fct_reorder(location_abbr, .x = correlation, .fun = median, .desc = TRUE)) %>%
-      ggplot(aes(x = location_abbr, y = correlation)) +
-      geom_boxplot() +
-      scale_y_continuous(name = "Within-location correlation", breaks = pretty) +
-      scale_x_discrete(name = "Location") +
-      labs(subtitle = paste0(c(str_add_space(tr), toupper(nur), str_to_title(mgmt)), collapse = ", ")) +
-      theme_genetics(base_size = 10) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1), strip.placement = "outside")
-  }) %>% 
-  ungroup()
-
-## Save plots
-location_cor_plot_list %>%
-  split(.$nursery) %>%
-  imap(~{
-  
-  ## Modify plots
-  plot_list1 <- map(.x$plot, ~. + theme(axis.title = element_blank()))
-  
-  # Combine plots
-  g_plot <- add_sub(plot = plot_grid(plotlist = plot_list1, ncol = 4), label = "Location")
-  ggsave(filename = paste0("location_correlations_", .y, ".jpg"), plot = g_plot, path = fig_dir,
-         height = 3 * ceiling(length(plot_list1) / 4), width = 12, dpi = 1000)
-  
-})
 
 
 location_repeatability <- location_correlations %>%
@@ -521,7 +419,51 @@ location_repeatability <- location_correlations %>%
 
 
 
-# Combine reliability, repeatability, and representitiveness -------------------
+# Calculate precision (variance of genotype mean) per environment ---------
+
+environmental_precision <- var_comp_matrices %>%
+  group_by(trait, nursery, management) %>%
+  do(varY = {
+    
+    row <- .
+    
+    tr <- row$trait
+    G <- row$Rho_scaled[[1]]
+    R <- `dimnames<-`(diag(as.numeric(row$varR_scaled[[1]])), 
+                      replicate(2, row.names(row$varR_scaled[[1]]), simplify = FALSE))
+    G_us <- row$Rho[[1]]
+    R_us <- `dimnames<-`(diag(as.numeric(row$varR[[1]])), 
+                         replicate(2, row.names(row$varR[[1]]), simplify = FALSE))
+    
+    # Calculate varY
+    env_varY <- tibble(environment = row.names(G_us), varY = map_dbl(seq_len(nrow(G_us)), ~varYbar(i = .x, G = G_us, R = R_us)))
+    
+    
+    # Locations to use
+    location_candidates_tr <- left_join(select(row, trait, nursery, management), candidate_locations, 
+                                        by = c("trait", "nursery", "management"))$location
+    
+    
+    # Create a list of environments per locations per year
+    env_varY1 <- pheno_dat %>%
+      inner_join(., distinct(inner_join(trial_metadata, row, by = c("nursery", "management")), trait, environment), 
+                 by = c("environment", "trait")) %>%
+      filter(location %in% location_candidates_tr) %>%
+      distinct(location, year, environment) %>%
+      droplevels() %>%
+      # Add varY
+      left_join(., env_varY, by = "environment")
+      
+    # Return the df
+    env_varY1
+    
+  }) %>% ungroup()
+
+
+
+
+
+# Combine reliability, repeatability, and representativeness -------------------
 
 
 # Combine data
@@ -534,90 +476,161 @@ location_performance_toplot <- location_performance %>%
                                filter(!duplicated(delim)) %>% select(-delim) %>% rename(location = location.x) %>%
                                group_by(location) %>% summarize(repeatability = mean(correlation))),
          # Combine data
-         performance = pmap(list(repeatability, reliability, representitiveness), ~reduce(list(..1, ..2, ..3), left_join, by = "location"))) %>%
+         performance = pmap(list(repeatability, reliability, representativeness), ~reduce(list(..1, ..2, ..3), left_join, by = "location"))) %>%
   unnest(performance) %>%
-  rename(precision = varR_mean, representitiveness = location_me_angles)
+  rename(precision = varR_mean, representativeness = location_me_angles)
 
 
-# Function to scale from 0 to 1
-scale_01 <- function(x, high.favorable = TRUE) {
-  if (high.favorable) {
-    ( x - min(x) ) / ( max(x) - min(x) )
-  } else {
-    x1 <- -(x - max(x))
-    x1 / max(x1 - min(x1))
-  }}
 
-## Plot
-location_performance_plots <- location_performance_toplot %>%
-  group_by(nursery, management, trait) %>%
-  do(plot = {
-    df <- .
-    df1 <- mutate(df, representitiveness = scale_01(representitiveness, high.favorable = FALSE))
+
+# Combine information for choosing locations ------------------------------
+
+## Calculate genotype-location interaction matrices
+genotype_location_matrices <- var_comp_matrices %>%
+  group_by(trait, nursery, management) %>%
+  do({
     
-    # Color scale breaks
-    color_breaks <- seq(0, 1, by = 0.25)
-    names(color_breaks) <- c("Low", rep("", 3), "High")
+    row <- .
     
-    ggplot(data = df1, aes(x = -log10(precision), y = repeatability)) +
-      geom_point(aes(color = representitiveness, shape = mega_environment), size = 2.5) +
-      geom_text_repel(aes(label = location), size = 3) +
-      scale_x_continuous(name = expression("Precision ["*-log10(sigma[R]^2)*"]"), breaks = pretty) +
-      scale_y_continuous(name = expression("Repeatability (within-location "~rho[G]*")"), breaks = pretty) +
-      scale_shape_discrete(name = "ME") +
-      scale_color_gradient(low = "grey75", high = "blue", breaks = color_breaks, name = "ME Rep") +
-      labs(subtitle = paste0(c(str_add_space(unique(df$trait)), toupper(unique(df$nursery)), str_to_title(unique(df$management))), 
-                             collapse = ", ")) +
-      theme_genetics(10)
+    tr <- row$trait
+    G <- row$Rho_scaled[[1]]
+    R <- `dimnames<-`(diag(as.numeric(row$varR_scaled[[1]])), 
+                      replicate(2, row.names(row$varR_scaled[[1]]), simplify = FALSE))
+    G_us <- row$Rho[[1]]
+    R_us <- `dimnames<-`(diag(as.numeric(row$varR[[1]])), 
+                         replicate(2, row.names(row$varR[[1]]), simplify = FALSE))
+    
+    # Locations to use
+    location_candidates_tr <- left_join(select(row, trait, nursery, management), candidate_locations, 
+                                        by = c("trait", "nursery", "management"))$location
+    
+    
+    # Create a list of environments per locations per year
+    pheno_dat1 <- pheno_dat %>%
+      inner_join(., distinct(inner_join(trial_metadata, row, by = c("nursery", "management")), trait, environment), 
+                 by = c("environment", "trait")) %>%
+      filter(location %in% location_candidates_tr) %>%
+      distinct(location, year, environment) %>%
+      droplevels()
+    
+    env_list <- pheno_dat1 %>%
+      split(.$year) %>%
+      map(droplevels) %>%
+      map(~split(., .$location) %>% map_chr("environment"))
+    
+    # Transpose to get environments per location
+    env_by_loc <- pheno_dat1 %>%
+      split(.$location) %>%
+      map("environment")
+    
+    
+    ####
+    
+    ## Calculate GL and RL based on unscaled covariance matrices
+    # For each year, extract the variance-covariance of environments
+    env_vcov_list <- map(env_list, ~G_us[row.names(G_us) %in% .x, row.names(G_us) %in% .x, drop = FALSE])
+    
+    # Calculate the average covariance between pairs of locations
+    loc_vcov <- crossing(location1 = sort(unique(unlist(map(env_list, names)))), location2 = location1) %>%
+      mutate(covariance = map2_dbl(location1, location2, ~{
+        mean(unlist(sapply(env_vcov_list, function(V) V[ row.names(V) %in% env_by_loc[[.x]], colnames(V) %in% env_by_loc[[.y]] ])))
+      }))
+    
+    # Convert to matrix
+    GL_us <- loc_vcov %>% 
+      # Convert NA to 0
+      mutate(covariance = ifelse(is.na(covariance), 0, covariance)) %>%
+      spread(location2, covariance) %>% 
+      as.data.frame() %>% 
+      column_to_rownames("location1") %>%
+      as.matrix()
+    
+    # Calculate the average residual variance per location
+    RL_us <- map(env_by_loc, ~R_us[row.names(R_us) %in% .x, row.names(R_us) %in% .x, drop = FALSE]) %>%
+      subset(., !sapply(., is_empty)) %>%
+      map(~as.matrix(mean(diag(.x)))) %>%
+      imap_dbl(~`dimnames<-`(.x, list(.y, .y))) %>%
+      {`dimnames<-`(diag(x = .), list(names(.), names(.))) }
+    
+    
+    # Return the matrices
+    tibble(GL = list(GL_us), RL = list(RL_us))
     
   }) %>% ungroup()
 
 
-# Split
-location_performance_plots1 <- location_performance_plots %>%
-  mutate(delim = paste(nursery, management, sep = "_")) %>%
-  split(.$delim)
+# Summarize location repeatability - convert to a matrix
+location_repeatability1 <- location_repeatability %>%
+  mutate(repeatability = map(repeatability, ~ filter(.x, location.x == location.y) %>% 
+                               mutate(delim = map2_chr(environment.x, environment.y, ~paste0(sort(c(.x, .y)), collapse = ":"))) %>%
+                               filter(!duplicated(delim)) %>% select(-delim) %>% rename(location = location.x) %>%
+                               group_by(location) %>% summarize(repeatability = mean(correlation)))) %>%
+  mutate(repeatability = map(repeatability, ~as.data.frame(.x) %>% column_to_rownames("location") %>% as.matrix())) %>%
+  ungroup()
 
-## Iterate and save plots
-for (df in location_performance_plots1) {
-  
-  # Create a filename
-  filename <- paste0("location_overall_performance_", unique(df$nursery), "_",
-                     unique(df$management), ".jpg")
-  # Create a plot grid
-  g_plot_grid <- plot_grid(plotlist = df$plot, ncol = 4)
-  # Number of rows
-  plot_rows <- ceiling(nrow(df) / 4)
-  
-  # Save
-  ggsave(filename = filename, plot = g_plot_grid, path = fig_dir, width = 20, height = plot_rows * 4,
-         dpi = 1000)
-  
-  
-}
+# Representativeness
+location_me_representativeness1 <- location_me_representativeness %>%
+  mutate(representativeness = map(representativeness, ~select(., location, mega_environment, location_me_angles))) %>%
+  mutate(representativeness = map(representativeness, ~select(., location, repre = location_me_angles) %>% as.data.frame(.x) %>% 
+                                    column_to_rownames("location") %>% as.matrix())) %>%
+  ungroup()
+
+# Combine data.frames
+location_opimization_input <- reduce(list(genotype_location_matrices, location_repeatability1, 
+                                          location_me_representativeness1), full_join) %>%
+  mutate(locations = map(GL, ~sort(row.names(.)))) %>%
+  mutate_at(vars(GL, RL), ~map2(.x = ., .y = locations, ~.x[.y, .y])) %>%
+  # mutate_at(vars(repeatability, representativeness), ~map2(.x = ., .y = locations, ~mutate(.x, location = factor(location, levels = .y)) %>%
+  #                                                            arrange(location) ))
+  mutate_at(vars(repeatability, representativeness), ~map2(.x = ., .y = locations, ~.x[.y,,drop = FALSE])) %>%
+  # Calculate a scaling factor for varY based on the average varY when using a single location 
+  # (this should presumably be the highest varY)
+  mutate(varY = map2(GL, RL, ~matrix(data = sapply(X = seq_along(diag(.x)), FUN = varYbar, G = .x, R = .y), 
+                                     dimnames = list(row.names(.x), "varY"))),
+         varY_scaling = map_dbl(varY, mean))
 
 
 
-## Rank the best locations for each trait
-# 
-# Rank each location for each quality within each trait
+
+
+
+
+
+
+# Rank the best locations for each trait ----------------------------------
+
+
+# Rank each location for each metric within each trait
 # Sum the ranks to get an overall score within each trait
 # Find the locations with the lowest score per trait
 # Summarize across traits
-# 
+#
 
+# Reorganize the data; calculate varY for each location
+location_opimization_input_torank <- location_opimization_input %>%
+  mutate_at(vars(varY, repeatability, representativeness), ~map(., ~as.data.frame(.) %>% rownames_to_column(., "location"))) %>%
+  mutate(data = pmap(select(., varY, repeatability, representativeness), .f = ~reduce(list(..1, ..2, ..3), full_join, by = "location"))) %>%
+  unnest(data) %>%
+  # Add ME information
+  left_join(., select(unnest(location_me_representativeness, representativeness), nursery:location))
+  
 # Calculate rank
-location_performance_rank <- location_performance_toplot %>%
+location_performance_rank <- location_opimization_input_torank %>%
   group_by(nursery, management, trait, mega_environment) %>%
-  mutate_at(vars(representitiveness, precision), list(rank = ~rank)) %>%
+  mutate_at(vars(repre, varY), list(rank = ~rank)) %>%
   mutate(repeatability_rank = rank(-repeatability)) %>%
   ungroup()
 
 # Sum the ranks
 location_performance_score <- location_performance_rank %>%
   mutate(score = rowSums(select(., contains("rank")))) %>%
-  select(nursery, management, trait, mega_environment, location, score)
+  group_by(nursery, management, trait, mega_environment) %>%
+  mutate(score_rank = rank(score, ties.method = "min")) %>%
+  select(nursery, management, trait, mega_environment, location, score, score_rank) %>%
+  ungroup()
 
+
+##
 
 # Get the location with the lowest score for each trait
 location_performance_score1 <- location_performance_score %>%
@@ -625,40 +638,196 @@ location_performance_score1 <- location_performance_score %>%
   top_n(x = ., n = 1, wt = -score) %>%
   ungroup()
 
+# For each nursery, list the subset of optimal locations
+# Count traits per best location
+nursery_best_rank_locations <- location_performance_score1 %>%
+  group_by(nursery, management, location) %>%
+  nest(trait, .key = "traits") %>%
+  mutate(traits = map(traits, 1))
+
+# Combine the ranks 
+location_performance_score1 <- location_performance_score %>%
+  full_join(., nursery_best_rank_locations) %>%
+  mutate(nTraits = map_dbl(traits, length)) %>%
+  arrange(nursery, management, trait, score, desc(nTraits)) %>%
+  group_by(nursery, management, trait, mega_environment) %>%
+  slice(1) %>%
+  ungroup()
 
 # For each nursery, list the subset of optimal locations
-nursery_optimal_locations <- location_performance_score1 %>%
-  distinct(nursery, management, location)
-
-## How many of these were included in trials within the last 5 years?
-nursery_optimal_locations %>%
-  inner_join(., distinct(filter(trial_metadata, year %in% 2014:2019), nursery, management, location)) %>%
-  group_by(nursery, management) %>%
-  summarize(nLoc = n_distinct(location))
-
-
-nursery_optimal_locations %>%
-  group_by(nursery, management) %>%
-  summarize(nLoc = n_distinct(location))
-
-# nursery management  nLoc
-# 1 mvn     rainfed       11
-# 2 wrn     irrigated     13
-# 3 wrn     rainfed        7
-
-# How many originally?
-location_performance_toplot %>% 
-  group_by(nursery, management) %>% 
-  summarize(nLoc = n_distinct(location))
-
-# nursery management  nLoc
-# 1 mvn     rainfed       15
-# 2 wrn     irrigated     21
-# 3 wrn     rainfed       12
+# Count traits per best location
+nursery_best_rank_locations <- location_performance_score1 %>%
+  group_by(nursery, management, location) %>%
+  nest(trait, .key = "traits") %>%
+  mutate(traits = map(traits, 1))
 
 
 
+# Optimize selection of locations -----------------------------------------
+
+# Load optimization package
+library(gramEvol)
 
 
+# Optimize the selection of locations for all traits per nursery
+# 
+# For each location penalty level, select a random set of locations and measure
+# fitness components
+# 
+# Number of resamples
+nSamples <- 50
+
+# Vector of location penalties
+loc_penalties <- c(0, 0.01, 0.05, 0.1, 0.5)
+
+# List of trait weights
+trait_weights <- list(
+  equal = setNames(rep(1, length(traits_keep)), traits_keep),
+  weighted = c('BetaGlucan' = 1.0, 'DiastaticPower' = 0.5, 'FreeAminoNitrogen' = 0.25, 'GrainProtein' = 1.0, 
+               'GrainYield' = 0.75, 'HeadingDate' = 0.25, 'MaltExtract' = 1.0, 'PlantHeight' = 0.25, 
+               'PlumpGrain' = 1.0, 'SolubleProteinTotalProtein' = 0.5, 'TestWeight' = 0.25)
+)
+
+
+# Run the optimization procedure 
+optimized_locations_all_traits <- location_opimization_input %>%
+  crossing(loc_penalty = loc_penalties, tibble(trait_weight_group = names(trait_weights), trait_weights)) %>%
+  arrange(nursery, management, loc_penalty, trait_weight_group) %>%
+  group_by(nursery, management, loc_penalty, trait_weight_group) %>%
+  do({
+    df <- .
+    
+    # Extract lists of matrices
+    GL <- df$GL
+    RL <- df$RL
+    corL <- df$repeatability
+    repL <- df$representativeness
+    # Location penalty
+    pen <- df$loc_penalty[[1]]
+    # Fitness component weights
+    comp_weight <- c(varY = 1, repAvg = 0.75, reprAvg = 0.25)
+    varYscaling <- df$varY_scaling
+    # List of traits
+    tr_list <- df$trait
+    # Trait weights
+    tr_weights <- df$trait_weights[[1]]
+    
+    # Vector of unique agronomic trait / maltq trait locations
+    agro_locs <- reduce(map(GL[df$trait %in% agro_traits], rownames), union)
+    core_agro_locs <- reduce(map(GL[df$trait %in% agro_traits], rownames), intersect)
+    maltq_locs <- intersect(agro_locs, reduce(map(GL[df$trait %in% quality_traits], rownames), union))
+    core_maltq_locs <- intersect(agro_locs, reduce(map(GL[df$trait %in% quality_traits], rownames), intersect))
+    
+    # Vector of all possible locations
+    all_locations <-  sort(union(agro_locs, maltq_locs))
+    # Max values of the decision variable for each location (depends on whether malt quality data was collected)
+    loc_values <- setNames(object = ifelse(all_locations %in% maltq_locs, 2, 1), nm = all_locations)
+    # List of core locations - at least one from each vector must be non-zero
+    non_zero_loc_list <- list(core_agro_locs = core_agro_locs, core_maltq_locs = core_maltq_locs)
+    
+    
+    # Implement the genetic algorithm
+    optim_out <- GeneticAlg.int(genomeLen = length(all_locations), genomeMin = rep(0, length(loc_values)), genomeMax = loc_values, 
+                                popSize = 100, iterations = 150, verbose = FALSE, mutationChance = 0.8, 
+                                evalFunc = function(x) -fitness_int(x = x, locs = all_locations, traits = tr_list, G.list = GL,
+                                                                    R.list = RL, P.list = corL, M.list = repL, varY.scaling = varYscaling,
+                                                                    component.weights = comp_weight, trait.weights = tr_weights,
+                                                                    non.zero.env.list = non_zero_loc_list, env.penalty = pen))
+    
+ 
+    # Return the fitness components
+    optim_x <- optim_out$best$genome
+    agro_optim_loc <- all_locations[optim_x != 0]
+    maltq_optim_locs <- all_locations[optim_x == 2]
+    fit_out <- fitness_int(x = optim_x, locs = all_locations, traits = tr_list, G.list = GL, R.list = RL, P.list = corL, M.list = repL, 
+                           varY.scaling = varYscaling, return.all = TRUE) %>%
+      as.data.frame() %>%
+      rownames_to_column("trait")
+    # Scale and average the fitness components
+    fit_out_scaled_trait <- fit_out %>%
+      mutate(varY = 1 - (varY / varYscaling), reprAvg = 1 - (reprAvg / 90))
+    # Summarize 
+    fit_out_scaled <- summarize_at(fit_out_scaled_trait, vars(-trait), weighted.mean, w = tr_weights, na.rm = TRUE)
+    
+    # Create a tibble that summarizes the optimization results
+    optim_results <- tibble(method = "optimization", fitness = list(fit_out), fitness_scaled = list(fit_out_scaled), 
+                            fitness_scaled_trait = list(fit_out_scaled_trait), 
+                            optim_loc = list(list(agro_loc = agro_optim_loc, maltq_loc = maltq_optim_locs)))
+    
+    ## Now randomly sample the same number of selelcted locations and calculate fitness
+    # Determine the number of agronomic locations without maltq
+    n_just_agro_locs <- length(setdiff(agro_optim_loc, maltq_optim_locs))
+    n_agro_maltq_locs <- length(maltq_optim_locs)
+    
+    # Generate samples
+    blank_optim_loc <- rep(0, length(optim_x))
+    random_loc_samples <- replicate(n = nSamples, simplify = FALSE, expr = {
+      # First sample locations for malting quality
+      maltq_loc_sample <- sample(x = which(loc_values == 2), size = n_agro_maltq_locs)
+      # Then sample for agronomic traits from the remainder
+      just_agro_loc_sample <- sample(x = setdiff(seq_along(loc_values), maltq_loc_sample), size = n_just_agro_locs)
+      
+      blank_optim_loc[just_agro_loc_sample] <- 1
+      blank_optim_loc[maltq_loc_sample] <- 2
+      blank_optim_loc
+    })
+      
+    # Calculate fitness for the random samples
+    random_loc_fitness <- random_loc_samples %>%
+      map(~fitness_int(x = .x, locs = all_locations, traits = tr_list, G.list = GL, R.list = RL, P.list = corL, M.list = repL, 
+                       varY.scaling = varYscaling, return.all = TRUE) %>% as.data.frame() %>% rownames_to_column("trait") )
+    
+    # Rescale fitness
+    random_loc_fitness_scaled_trait <- random_loc_fitness %>%
+      map(~mutate(., varY = 1 - (varY / varYscaling), reprAvg = 1 - (reprAvg / 90)))
+    # Summarize
+    random_loc_fitness_scaled <- random_loc_fitness_scaled_trait %>%
+      map_df(., ~summarize_at(.x, vars(-trait), weighted.mean, w = tr_weights, na.rm = TRUE))
+                            
+    # Save random fitness results
+    random_results <- tibble(method = "random", fitness = list(random_loc_fitness), fitness_scaled = list(random_loc_fitness_scaled),
+                             fitness_scaled_trait = list(random_loc_fitness_scaled_trait))
+    
+    
+    ## Calculate the fitness of the ranked choice environments ##
+    best_rank_locations <- subset(nursery_best_rank_locations, nursery %in% df$nursery, location, drop = TRUE)
+    # Convert this to 0, 1, 2
+    best_rank_x <- loc_values
+    best_rank_x[!names(best_rank_x) %in% best_rank_locations] <- 0
+    
+    best_rank_fitness <- fitness_int(x = best_rank_x, locs = all_locations, traits = tr_list, G.list = GL, R.list = RL, P.list = corL, 
+                                     M.list = repL,  varY.scaling = varYscaling, return.all = TRUE) %>% 
+      as.data.frame() %>% 
+      rownames_to_column("trait")
+    
+    # Rescale fitness
+    best_rank_fitness_scaled_trait <- best_rank_fitness %>%
+      mutate(., varY = 1 - (varY / varYscaling), reprAvg = 1 - (reprAvg / 90)) 
+    # Summarize 
+    best_rank_fitness_scaled <- summarize_at(best_rank_fitness_scaled_trait, vars(-trait), weighted.mean, w = tr_weights, na.rm = TRUE)
+    
+    # Save ranked locations fitness results
+    best_rank_results <- tibble(method = "best_rank", fitness = list(best_rank_fitness), fitness_scaled = list(best_rank_fitness_scaled),
+                                fitness_scaled_trait = list(best_rank_fitness_scaled_trait),
+                                optim_loc = list(list(agro_loc = all_locations[best_rank_x != 0], 
+                                                      maltq_loc = all_locations[best_rank_x == 2])))
+                                
+    # Combine and return results
+    bind_rows(optim_results, random_results, best_rank_results)
+    
+  }) %>% ungroup()
+
+
+
+  
+
+
+
+# Save data for figure construction ---------------------------------------
+
+save("environmental_precision", "loadings_prop_var", "location_correlations", "location_performance_toplot", 
+     "candidate_locations", "nursery_mega_environment_output", "pedigree_model_comparison", 
+     "optimized_locations_all_traits", "location_opimization_input", "trait_weights", 
+     file = file.path(result_dir, "figure_data.RData"))
 
 

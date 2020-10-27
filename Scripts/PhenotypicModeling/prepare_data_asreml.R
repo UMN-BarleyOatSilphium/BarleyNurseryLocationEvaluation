@@ -11,12 +11,19 @@ proj_dir <- getwd()
 source(file.path(proj_dir, "startup.R"))
 
 
+# Trait-trial metadata to use
+trial_trait_metadata1 <- trial_trait_metadata %>%
+  mutate(replications = ifelse(trait %in% quality_traits, 1, replications)) %>%
+  distinct_at(vars(trial, trait, replications))
+
 
 ## Nest phenotypic data by trait, nursery, and management
 pheno_dat_subset <- pheno_dat %>%
   # Add nursery and management variables
   mutate(nursery = tolower(str_sub(trial, 1, 3)),
          management = tolower(str_extract(trial, "Rainfed|Irrigated"))) %>%
+  # Add replication information
+  left_join(., trial_trait_metadata1) %>%
   mutate_at(vars(trial, line_name, environment), as.factor)
 
 

@@ -716,6 +716,189 @@ angle <- function(v1, v2, degrees = TRUE) {
 
 
 
+# Function to scale from 0 to 1
+scale_01 <- function(x, high.favorable = TRUE) {
+  if (high.favorable) {
+    ( x - min(x) ) / ( max(x) - min(x) )
+  } else {
+    x1 <- -(x - max(x))
+    x1 / max(x1 - min(x1))
+  }}
+
+
+# Function to calculate GxE based on a variance-covariance matrix
+calc_varGE <- function(G) {
+  
+  # If 1x1 matrix, return the genetic variance
+  if (ncol(G) == 1 & nrow(G) == 1) {
+    G[,]
+    
+  } else {
+    
+  
+    # Calculate the genetic correlation between environments
+    D <- diag(diag(G)^-(0.5), nrow = nrow(G))
+    corA <- D %*% G %*% D
+    sdG <- sqrt(diag(G))
+    # Number of environments
+    ne <- nrow(G)
+    
+    # Calculate the variance of genetic standard deviations
+    varSDG <- var(sdG)
+    # Average covariance between environments
+    # Sum the product of the standard deviations and 1 - correlation between envs
+    prodG <- tcrossprod(sdG) * (1 - corA)
+    sumProdG <- (sum(prodG) * (1 / (ne * (ne - 1))))
+    
+    # Calculate GxE variance
+    varSDG + sumProdG
+    
+  }
+  
+}
+
+
+# Define a function to calculate the variance of a genotype mean based on 
+# variance covariance matrices and an indicator variable
+varYbar <- function(i, G, R) {
+  
+  # Make sure G, R, and i have the same rows
+  stopifnot(is.matrix(G), is.matrix(R))
+  stopifnot(isTRUE(all.equal(nrow(G), nrow(R))))
+  
+  selector <- i
+  # selector <- as.numeric(i) == 1
+  
+  G1 <- G[selector, selector, drop = FALSE]
+  R1 <- R[selector, selector, drop = FALSE]
+  
+  # Number of environments
+  ne <- nrow(G1)
+  
+  # Calculate GxE variance
+  varGE <- calc_varGE(G = G1)
+  
+  # Calculate the average residual variance
+  varR <- mean(diag(R1))
+  
+  # Calcualate the variance of a genotype mean and return
+  (varR + varGE) / ne
+  
+}
+
+
+
+
+## Fitness functions for optimization
+# Fitness function
+# 
+# weights is a numeric vector of weights for the variance of a genotype mean,
+# repeatability, and representativeness
+# 
+fitness <- function(x, G, R, P, M, component.weights = c(varY = 1, repAvg = 1, reprAvg = 1),
+                    varY.scaling = varY, env.penalty = 2, return.all = FALSE) {
+  
+  i2 <- which(x == 1)
+  # iall <- seq_along(i)
+  # 
+  # # Calculate the variance when using all environments
+  # varYmin <- varYbar(i = iall, G = G, R = R)
+  # Calculate the variance of a genotype mean
+  varY <- varYbar(i = i2, G = G, R = R)
+  
+  # Calculate the average repeatability
+  # This is already scaled
+  repAvg <- c((x %*% P)/sum(x))
+  
+  # Calculate the average representativeness
+  reprAvg <- c((x %*% M)/sum(x))
+  
+  # Create a fitness metric by scaling all contribution metrics
+  fi <- ((1 - (varY / varY.scaling)) * component.weights["varY"]) + (repAvg * component.weights["repAvg"]) + 
+    ((1 - (reprAvg / 90)) * component.weights["reprAvg"])
+  # Add penalty
+  fi1 <- fi - (env.penalty * mean(x))
+  
+  # Return all or just the fitness
+  if (return.all) {
+    c(varY = varY, repAvg = repAvg, reprAvg = reprAvg)
+    
+  } else {
+    as.numeric(fi1)
+    
+  }
+  
+}
+
+
+
+# 
+# Optimize the selection of locations for all traits
+# 
+# The objective is to maximize the fitness of as many traits as possible
+# The decision variable will be an integer with values 0, 1, or 2, where
+# 0 indicates no trial will be conducted, 1 indicates an agronomic-trait trial
+# will be conducted, and 2 indicates both agronomic and malt quality trait 
+# trails will be conducted
+# 
+
+# Define the fitness function
+fitness_int <- function(x, locs, traits, G.list, R.list, P.list, M.list, component.weights = c(varY = 1, repAvg = 1, reprAvg = 1),
+                        trait.weights = setNames(rep(1, length(traits)), traits), varY.scaling, non.zero.env.list,
+                        env.penalty = 2, return.all = FALSE) {
+  
+  # Return a very low value if there isn't at least one 2
+  if (!any(x == 2)) return(-1e10)
+  
+  # Determine the locations selected for agro-only or both agro and maltq
+  agro_locs_use <- locs[x != 0]
+  maltq_locs_use <- locs[x == 2]
+  
+  if (!missing(non.zero.env.list)) {
+    # Return a very low value if there is not at least 1 location from each core group
+    if (!all(sapply(lapply(X = non.zero.env.list, `%in%`, union(agro_locs_use, maltq_locs_use)), any))) return(-1e10)
+  }
+  
+  
+  # List of locations per trait
+  locs_use_per_trait <- ifelse(traits %in% agro_traits, list(agro_locs_use), list(maltq_locs_use))
+  
+  # Make sure all of traits are in trait_weights
+  stopifnot(all(traits %in% names(trait.weights)))
+  trait.weights <- trait.weights[traits]
+  
+  # Calculate fitness components for each trait given the selected locations
+  trait_fitness <- mapply(G.list, R.list, P.list, M.list, locs_use_per_trait, FUN = function(.a, .b, .c, .d, .e) {
+    fitness(x = as.numeric(row.names(.a) %in% .e), G = .a, R = .b, P = .c, M = .d, component.weights = component.weights,
+            env.penalty = env.penalty, return.all = TRUE)
+  })
+  colnames(trait_fitness) <- traits
+  
+  if (!return.all) {
+    
+    # Calculate overall fitness
+    trait_fitness["reprAvg",] <- 1 - (trait_fitness["reprAvg",] / 90)
+    trait_fitness["varY",] <- 1 - (trait_fitness["varY",] / varY.scaling)
+    # Calculate the weighted average across traits for each components
+    fi1 <- apply(X = trait_fitness, MARGIN = 1, FUN = weighted.mean, w = trait.weights, na.rm = TRUE)
+    # Now weight components
+    fi2 <- weighted.mean(fi1[names(component.weights)], component.weights)
+    
+    # Return fitness with penalty
+    fi2 - (env.penalty * length(agro_locs_use))
+    
+  } else {
+    t(trait_fitness)
+  }
+  
+}
+
+
+
+
+
+
+
   
 
 

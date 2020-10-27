@@ -102,7 +102,7 @@ nursery_entry_metadata_use <- bind_rows(
   mutate(aliases = map_chr(aliases, ~paste0(., collapse = ", ")))
 
 
-## Extract other metadata information (i.e. row type, use)
+## Extract other metadata information (i.e. row type, end use)
 nursery_entry_metadata_use1 <- nursery_entry_metadata_use %>% 
   left_join(., distinct(nursery_entry_data_expanded, line_name, row_type, end_use)) %>%
   group_by(line_name)
@@ -134,6 +134,9 @@ nursery_pheno_data1 %>%
 file.copy(from = file.path(tidy_dir, "nursery_trial_metadata_use.csv"), 
           to = file.path(data_dir, "nursery_trial_metadata_use.csv"), overwrite = TRUE)
 
+# Copy the trait trial metadata
+file.copy(from = file.path(tidy_dir, "nursery_trial_trait_metadata_use.csv"), 
+          to = file.path(data_dir, "nursery_trial_trait_metadata_use.csv"), overwrite = TRUE)
 
 
 ##

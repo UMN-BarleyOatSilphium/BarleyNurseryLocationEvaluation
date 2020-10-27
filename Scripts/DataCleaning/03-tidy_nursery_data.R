@@ -108,28 +108,45 @@ mvn_agro_data_df <- mvn_agro_data1 %>%
   arrange(year, location, trait, line_name)
 
 
-## Extract station information from the list
-mvn_station_data <- mvn_extracted_data_list %>%
-  map_df("station_info") %>%
-  mutate_at(vars(contains("date")), ymd) %>%
-  mutate(location = str_to_title(location) %>% str_remove_all(., " "),
-         year = year(planting_date),
-         management = "rainfed",
-         nursery = "mvn") %>%
-  select(-number)
 
 ## Load station data renaming df
 mvn_location_rename <- read_excel(path = file.path(extr_dir, "mvn_extracted_location_rename.xlsx"), sheet = "station_rename")
 
+# Read in the station data
+mvn_station_data <- read_csv(file = file.path(extr_dir, "mvn_extracted_station_info.csv"))
+
 # Rename locations in the station data df
+# Parse some other columns
 mvn_station_data_df <- mvn_station_data %>%
+  mutate(location = str_to_title(location) %>% str_remove_all(., " "),
+         year = as.numeric(str_extract(report, "[0-9]{4}")),
+         management = "rainfed",
+         nursery = "mvn") %>%
   left_join(., mvn_location_rename) %>%
   select(-location) %>%
   rename(location = rename) %>%
-  select(nursery, location, state, year, management, names(.))
+  mutate_at(vars(contains("date")), ymd) %>%
+  select(nursery, location, state, year, management, names(.), -contains("number")) %>%
+  filter_at(vars(planting_date:lsd_bua), any_vars(!is.na(.))) %>%
+  # If replications is NA, assume 3
+  mutate(replications = ifelse(is.na(replications), 3, replications),
+         # Convert lsd_bua to kgha
+         lsd_kgha1 = lsd_bua * 53.78595,
+         lsd_kgha = coalesce(lsd_kgha, lsd_kgha1)) %>%
+  rename(lsd_yield = lsd_kgha) %>% select(-lsd_kgha1, -lsd_bua)
+         
 
-
-
+# Create a trait metadata table; trait name and replications, lsd (if applicable)
+mvn_agro_trait_metadata <- mvn_agro_data_df %>% 
+  distinct_at(vars(-line_name, -value)) %>%
+  left_join(., select(mvn_station_data_df, nursery, location, year, management, replications, lsd_yield)) %>%
+  # Full join with complete list of trial/trait combinations for the nursery
+  full_join(., distinct(mvn_agro_data_df, location, year, nursery, management, trait)) %>%
+  mutate(lsd = ifelse(trait == "GrainYield", lsd_yield, NA),
+         replications = ifelse(is.na(replications), 3, replications)) %>%
+  select(-lsd_yield)
+  
+mvn_station_data_df <- select(mvn_station_data_df, -lsd_yield)
 
 
 
@@ -157,6 +174,7 @@ wrn_location_rename <- read_excel(path = file.path(extr_dir, "wrn_extracted_loca
 
 # Rename locations in the trait data
 wrn_agro_data1 <- wrn_agro_data %>%
+  mutate(location = ifelse(str_detect(location, " "), str_remove_all(str_to_title(location), " "), location)) %>%
   left_join(., wrn_location_rename) %>%
   select(-location) %>%
   rename(location = rename)
@@ -165,11 +183,13 @@ wrn_agro_data1 <- wrn_agro_data %>%
 # Modify elements
 wrn_agro_data_df <- wrn_agro_data1 %>%
   # Coalesce line name, cultivar, or selection
-  mutate(line_name = coalesce(selection, cultivar.),
+  mutate(line_name = coalesce(selection, cultivar., line_name),
          # Extract dryland or irrigated
-         management = ifelse(str_detect(table_name, "DRYLAND"), "rainfed", "irrigated"),
-         # Rename location
-         location = str_to_title(location) %>% str_remove_all(., " "),
+         management = case_when(
+           !is.na(management) ~ management,
+           str_detect(table_name, "DRYLAND") ~ "rainfed",
+           TRUE ~ "irrigated"
+         ),
          # Remove spaces and capital letters from trait
          trait = str_add_space(trait) %>% str_to_title() %>% str_remove_all(" "),
          # Add nursery
@@ -183,11 +203,39 @@ wrn_agro_data_df <- wrn_agro_data1 %>%
   arrange(year, location, trait, line_name)
 
 
+# Read in the station data
+wrn_station_data <- read_csv(file = file.path(extr_dir, "wrn_extracted_station_info.csv"))
+# Read in the station trait metadata
+wrn_trait_station_data <- read_csv(file = file.path(extr_dir, "wrn_extracted_trial_location_metadata.csv")) %>%
+  mutate(location = ifelse(str_detect(location, " "), str_remove_all(str_to_title(location), " "), location),
+         year = str_extract(report, "[0-9]{2,4}"),
+         year = ifelse(nchar(year) == 2, paste0("20", year), year) %>% as.numeric())
 
 
-## Extract station information from the trait data
-wrn_station_data_df <- wrn_agro_data_df %>% 
-  distinct(location, state, year, nursery, management)
+# Rename locations in the station data df
+# Parse some other columns
+wrn_station_data_df <- wrn_station_data %>%
+  mutate(location = ifelse(str_detect(location, " "), str_remove_all(str_to_title(location), " "), location),
+         year = str_extract(report, "[0-9]{2,4}"),
+         year = ifelse(nchar(year) == 2, paste0("20", year), year) %>% as.numeric()) %>%
+  left_join(., wrn_location_rename) %>%
+  select(-location) %>%
+  rename(location = rename) %>%
+  left_join(., distinct(wrn_agro_data_df, location, year, nursery, management)) %>%
+  mutate_at(vars(contains("date")), ymd) %>%
+  filter_at(vars(nursery, management), any_vars(!is.na(.)))
+
+# Create a trait metadata table; trait name and replications, lsd (if applicable)
+wrn_agro_trait_metadata <- wrn_trait_station_data %>% 
+  left_join(., wrn_location_rename) %>%
+  select(-location) %>%
+  rename(location = rename) %>%
+  filter(!is.na(location)) %>%
+  select(location, year, nursery, management, trait, replications, lsd) %>%
+  # Full join with complete list of trial/trait combinations for the nursery
+  full_join(., distinct(wrn_agro_data_df, location, year, nursery, management, trait)) %>%
+  mutate(replications = ifelse(is.na(replications), 3, replications))
+
 
 
 ## Combine agronomic data
@@ -202,11 +250,13 @@ agro_data_tidy <- bind_rows(mvn_agro_data_df, wrn_agro_data_df) %>%
 
 ## Combine station information
 agro_station_data_tidy <- bind_rows(mvn_station_data_df, wrn_station_data_df) %>%
-  arrange(year, location, nursery) %>%
+  arrange(nursery, year, location) %>%
   # Create trial names
   mutate(trial = paste0(toupper(nursery), "_", year, "_", location, "_", str_to_title(management)),
          # Remove numbers from location
-         location = str_remove(location, "[0-9]$"))
+         location = str_remove(location, "[0-9]$"),
+         # Brandon in is Manitoba
+         state = ifelse(location == "Brandon", "MB", state))
          
 
 
@@ -248,7 +298,9 @@ maltq_station_df <- maltq_station_data %>%
   # Create trial names
   mutate(trial = paste0(toupper(nursery), "_", year, "_", location, "_", str_to_title(management)),
          # Remove numbers from location
-         location = str_remove(location, "[0-9]$"))
+         location = str_remove(location, "[0-9]$"),
+         # Brandon in is Manitoba
+         state = ifelse(location == "Brandon", "MB", state))
 
 
 ## No need to edit the location strings for capitalization or sentence case
@@ -275,7 +327,23 @@ nursery_trial_metadata_tidy <- nursery_trial_metadata2 %>%
   select(-state) %>%
   # Add state information for those missing
   left_join(., filter(distinct(nursery_trial_metadata2, location, state), !is.na(state)), by = "location") %>%
-  mutate(state = ifelse(location == "Kernen", "SK", state))
+  mutate(state = ifelse(location == "Kernen", "SK", state)) %>%
+  arrange(trial, location, year, nursery, management, planting_date, harvest_date) %>%
+  # Remove duplicates if planting date is available
+  group_by(trial, location, year, nursery, management) %>%
+  slice(1) %>% ungroup() %>%
+  select(-replications)
+
+# Create a trait/trial metadata df
+nursery_trait_metadata_tidy <- bind_rows(mvn_agro_trait_metadata, wrn_agro_trait_metadata) %>%
+  # Add maltq station data
+  bind_rows(., mutate(distinct_at(maltq_trait_df, vars(location, year, nursery, management, trait)), replications = 1)) %>%
+  # Create trial names
+  mutate(trial = paste0(toupper(nursery), "_", year, "_", location, "_", str_to_title(management)),
+         # Remove numbers from location
+         location = str_remove(location, "[0-9]$")) %>%
+  left_join(distinct(nursery_trial_metadata_tidy, trial, location, year, nursery, management), .)
+  
 
 
 
@@ -295,28 +363,45 @@ nursery_trial_metadata_tidy <- nursery_trial_metadata2 %>%
 # 8. latitude (to be guessed by GEMS)
 # 10. longitude (to be guessed by GEMS)
 
-
-## Create environmental codes
-nursery_trial_metadata_tidy1 <- nursery_trial_metadata_tidy %>%
+## Make a common trial key; change some location names
+nursery_trial_metadata_key <- nursery_trial_metadata_tidy %>%
+  distinct(trial, location, state, year, nursery, management) %>%
   # Make location corrections
   mutate(location = case_when(
     location == "Gennesse" ~ "Genesee", 
     location == "Moorehead" ~ "Moorhead",
     location == "Stirling" ~ "Sterling",
     location == "Tammany" ~ "Lewiston",
+    # Kernen and Sasktatoon are the same locations
+    location == "Kernen" ~ "Saskatoon",
     TRUE ~ location)
   ) %>%
   # Remove spaces from location, create environment code and trial name and RorI for rain/irr
   mutate(mgmt = ifelse(str_detect(trial, "Rainfed"), "R", "I"),
+         trial_new = paste0(toupper(nursery), "_", year, "_", location, "_", str_to_title(management)),
          environment = paste0(toupper(abbreviate(location, 3)), str_sub(year, 3, 4), mgmt)) %>%
-  select(trial, location, year, environment, nursery, names(.)) %>%
+  select(trial, trial_new, location, state, year, environment, nursery, management) %>%
   distinct() 
 
+
+# Create a new metadata df
+nursery_trial_metadata_tidy1 <- nursery_trial_metadata_tidy %>%
+  select(-location, -year, -nursery, -management, -state) %>%
+  left_join(., nursery_trial_metadata_key) %>%
+  select(trial = trial_new, location, state, year, environment, nursery, management, names(.), -trial)
 
 
 ## Add environment code to nursery_data_tidy
 nursery_data_tidy1 <- nursery_data_tidy %>%
-  left_join(., select(nursery_trial_metadata_tidy1, trial, environment))
+  select(-location, -year, -nursery, -management) %>%
+  left_join(., nursery_trial_metadata_key) %>%
+  select(trial = trial_new, trait, line_name, value)
+
+# And to the trait metadata
+nursery_trait_metadata_tidy1 <- nursery_trait_metadata_tidy %>%
+  select(-location, -year, -nursery, -management) %>%
+  left_join(., nursery_trial_metadata_key) %>%
+  select(trial = trial_new, trait, replications, lsd)
 
 
 
@@ -348,7 +433,8 @@ base_url <- "https://nominatim.openstreetmap.org/search.php?"
 for (i in seq_len(nrow(location_meta))) {
   
   # Convert city and state into long form
-  city <- str_replace_all(str_add_space(location_meta$location[i]), " ", "%20")
+  city <- location_meta$location[i]
+  city <- str_replace_all(ifelse(city == "McVille", city, str_add_space(city)), " ", "%20")
   state <- str_replace_all(state.prov.names[state.prov.abb == location_meta$state[i]], " ", "%20")
   country <- ifelse(location_meta$state[i] %in% state.abb, "US", "CA")
   
@@ -385,6 +471,7 @@ location_meta1 <- location_meta %>%
 
 ## Recombine with trial metadata, save
 nursery_trial_metadata_tidy2 <- left_join(nursery_trial_metadata_tidy1, location_meta1)
+
 
 ## Write a table of locations as a CSV
 write_csv(x = nursery_trial_metadata_tidy2, path = file.path(tidy_dir, "nursery_trial_metadata_use.csv"), na = "")
@@ -519,6 +606,15 @@ nursery_trait_data2 <- nursery_trait_data1 %>%
   select(-trait) %>% rename(trait = trait_new) %>%
   filter(!is.na(trait))
 
+# Rename in the trait metadata
+nursery_trait_metadata_tidy2 <- nursery_trait_metadata_tidy1 %>%
+  left_join(., select(unique_traits1, trait = trait_old, trait_new)) %>%
+  select(-trait) %>% rename(trait = trait_new) %>%
+  filter(!is.na(trait))
+
+
+
+
 
 ## Look for traits with obsene distributions
 par(mfrow = c(4, 5))
@@ -530,7 +626,9 @@ par(mfrow = c(1,1))
 
 
 # Vector of traits to investigate
-traits_bad_units <- c("GrainYield", "TestWeight", "HeadingDate", "MaturityDate", "PlantHeight")
+traits_bad_units <- c("GrainYield", "TestWeight", "HeadingDate", "MaturityDate", "PlantHeight", "BetaGlucan", "PlumpGrain")
+
+
 
 ## One trait at a time
 # Grain Yield
@@ -625,11 +723,54 @@ plant_height_edit <- nursery_trait_data2 %>%
 hist(plant_height_edit$value)
 
 
+# BetaGlucan
+# Visualize
+hist(subset(nursery_trait_data2, trait == "BetaGlucan" & value > 2000, value, drop = T))
+
+
+# Look at distinct nuseries to understand
+nursery_trait_data2 %>%
+  filter(trait == "BetaGlucan") %>%
+  filter(value > 2000) %>%
+  mutate(nursery = str_extract(trial, "^[A-Z]{3}")) %>%
+  # distinct(nursery, year)
+  group_by(trial) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n))
+
+## This is real; remove these outliers
+beta_glucan_edit <- nursery_trait_data2 %>% 
+  filter(trait == "BetaGlucan", value <= 1500) # 1500 is the maximum defined by T3
+
+
+# PlumpGrain
+
+# Visualize
+hist(subset(nursery_trait_data2, trait == "PlumpGrain", value, drop = T))
+
+
+# Look at distinct nuseries to understand
+nursery_trait_data2 %>%
+  filter(trait == "PlumpGrain") %>%
+  filter(value < 20) %>%
+  group_by(trial) %>%
+  summarize(n = n())
+
+# Keep this - no edits
+
+plump_grain_edit <- nursery_trait_data2 %>% 
+  filter(trait == "PlumpGrain")
+
+
+
+
+
 
 ## Reassemble the data.frame
 nursery_trait_data3 <- nursery_trait_data2 %>%
   filter(! trait %in% traits_bad_units) %>%
-  bind_rows(., grain_yield_edit, heading_date_edit, maturity_date_edit, test_weight_edit, plant_height_edit)
+  bind_rows(., grain_yield_edit, heading_date_edit, maturity_date_edit, test_weight_edit, plant_height_edit,
+            beta_glucan_edit, plump_grain_edit)
 
 ## Find duplicates
 nursery_trait_data3_dups <- nursery_trait_data3 %>%
@@ -644,7 +785,8 @@ nursery_trait_data3_dups <- nursery_trait_data3 %>%
 nursery_trait_data4 <- nursery_trait_data3 %>%
   group_by_at(vars(-value)) %>%
   summarize(value = mean(value)) %>%
-  ungroup()
+  ungroup() %>%
+  filter(!is.na(line_name))
 
 
 
@@ -667,6 +809,9 @@ nursery_trait_data4 %>%
   spread(trait, value) %>%
   write_csv(path = file.path(tidy_dir, "nursery_trait_data_wide.csv"), na = "")
 
+
+# Save the trait trial metadata
+write_csv(x = nursery_trait_metadata_tidy2, path = file.path(tidy_dir, "nursery_trial_trait_metadata_use.csv"), na = "")
 
 
 
