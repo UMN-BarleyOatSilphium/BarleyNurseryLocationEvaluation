@@ -80,9 +80,7 @@ Ainv_df <- summary(Ainv) %>%
 
 
 ## Save data for use by ASREML
-# save("pheno_to_model", "Ainv_df", "A", file = file.path(data_dir, "data_for_asreml_modeling.RData"))
-save("pheno_to_model", "Ainv_df", "A",
-     file = "Z:/BARLEY_LAB/Jeff/Projects/BarleyNurseryAnalysis/Data/data_for_asreml_modeling.RData")
+save("pheno_to_model", "Ainv_df", "A", file = file.path(data_dir, "data_for_asreml_modeling.RData"))
 
 
 

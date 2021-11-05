@@ -716,14 +716,59 @@ angle <- function(v1, v2, degrees = TRUE) {
 
 
 
-# Function to scale from 0 to 1
-scale_01 <- function(x, high.favorable = TRUE) {
-  if (high.favorable) {
-    ( x - min(x) ) / ( max(x) - min(x) )
+# Extra scale functions
+# x - a vector or matrix. May also be a list of these.
+scale2 <- function(x, range = c("-11", "01"), high.favorable = TRUE) {
+  range <- match.arg(range)
+  
+  # Define two other functions
+  scale_01 <- function(x, min_x, max_x, high.favorable = TRUE) {
+    if (high.favorable) {
+      ( x - min_x ) / ( max_x - min_x )
+    } else {
+      x1 <- -(x - max_x)
+      x1 / max(x1 - min(x1))
+    }
+  }
+  
+  scale_neg1pos1 <- function(x, min_x, max_x, high.favorable = TRUE) {
+    if (high.favorable) {
+      -1 + (( (x - min_x) * 2 ) / ( max_x - min_x ))
+    } else {
+      -(-1 + (( (x - min_x) * 2 ) / ( max_x - min_x )))
+    }
+  }
+  
+  
+  
+  # Switch if x is a list
+  if (!is.list(x)) {
+    min_x <- min(x)
+    max_x <- max(x)
+    
+    if (range == "01") {
+      scale_01(x = x, min_x = min_x, max_x = max_x, high.favorable = high.favorable)
+      
+    } else if (range == "-11") {
+      scale_neg1pos1(x = x, min_x = min_x, max_x = max_x, high.favorable = high.favorable)
+
+    }
+    
   } else {
-    x1 <- -(x - max(x))
-    x1 / max(x1 - min(x1))
-  }}
+    # Calculate global min and max x
+    min_x <- min(unlist(x))
+    max_x <- max(unlist(x))
+    
+    if (range == "01") {
+      lapply(X = x, scale_01, min_x = min_x, max_x = max_x, high.favorable = high.favorable)
+      
+    } else if (range == "-11") {
+      lapply(X = x, scale_neg1pos1, min_x = min_x, max_x = max_x, high.favorable = high.favorable)
+      
+    }
+  }
+  
+}
 
 
 # Function to calculate GxE based on a variance-covariance matrix
@@ -796,13 +841,14 @@ varYbar <- function(i, G, R) {
 # repeatability, and representativeness
 # 
 fitness <- function(x, G, R, P, M, component.weights = c(varY = 1, repAvg = 1, reprAvg = 1),
-                    varY.scaling = varY, env.penalty = 2, return.all = FALSE) {
+                    varY.scaling = 1, env.penalty = 2, return.all = FALSE) {
   
   i2 <- which(x == 1)
   # iall <- seq_along(i)
   # 
   # # Calculate the variance when using all environments
   # varYmin <- varYbar(i = iall, G = G, R = R)
+  
   # Calculate the variance of a genotype mean
   varY <- varYbar(i = i2, G = G, R = R)
   
@@ -813,9 +859,12 @@ fitness <- function(x, G, R, P, M, component.weights = c(varY = 1, repAvg = 1, r
   # Calculate the average representativeness
   reprAvg <- c((x %*% M)/sum(x))
   
+  # # Create a fitness metric by scaling all contribution metrics
+  # fi <- ((1 - (varY / varY.scaling)) * component.weights["varY"]) + (repAvg * component.weights["repAvg"]) + 
+  #   ((1 - (reprAvg / max(reprAvg))) * component.weights["reprAvg"])
   # Create a fitness metric by scaling all contribution metrics
   fi <- ((1 - (varY / varY.scaling)) * component.weights["varY"]) + (repAvg * component.weights["repAvg"]) + 
-    ((1 - (reprAvg / 90)) * component.weights["reprAvg"])
+    (reprAvg * component.weights["reprAvg"])
   # Add penalty
   fi1 <- fi - (env.penalty * mean(x))
   
@@ -844,7 +893,7 @@ fitness <- function(x, G, R, P, M, component.weights = c(varY = 1, repAvg = 1, r
 
 # Define the fitness function
 fitness_int <- function(x, locs, traits, G.list, R.list, P.list, M.list, component.weights = c(varY = 1, repAvg = 1, reprAvg = 1),
-                        trait.weights = setNames(rep(1, length(traits)), traits), varY.scaling, non.zero.env.list,
+                        trait.weights = setNames(rep(1, length(traits)), traits), varY.scaling = 1, non.zero.env.list,
                         env.penalty = 2, return.all = FALSE) {
   
   # Return a very low value if there isn't at least one 2
@@ -877,7 +926,7 @@ fitness_int <- function(x, locs, traits, G.list, R.list, P.list, M.list, compone
   if (!return.all) {
     
     # Calculate overall fitness
-    trait_fitness["reprAvg",] <- 1 - (trait_fitness["reprAvg",] / 90)
+    # trait_fitness["reprAvg",] <- 1 - (trait_fitness["reprAvg",] / max(trait_fitness["reprAvg",]))
     trait_fitness["varY",] <- 1 - (trait_fitness["varY",] / varY.scaling)
     # Calculate the weighted average across traits for each components
     fi1 <- apply(X = trait_fitness, MARGIN = 1, FUN = weighted.mean, w = trait.weights, na.rm = TRUE)

@@ -14,9 +14,6 @@ library(forcats)
 ## This the project root
 proj_dir <- here::here()
 
-## Google drive directory
-gdrive_dir <- "C:/GoogleDrive"
-
 # Other directories
 fig_dir <- file.path(proj_dir, "Figures")
 data_dir <- file.path(proj_dir, "Data")
@@ -88,6 +85,12 @@ f_nursery_expand <- function(x) c("mvn" = "Mississippi Valley Nursery", "wrn" = 
 # Rename fitness components
 f_fitness_comp_replace <- function(x) 
   str_replace_all(x, c("varY" = "Precision", "repAvg" = "Repeatability", "reprAvg" = "Representativeness"))
+
+# Another renaming function for the fitness components
+f_fitness_comp_replace2 <- function(x) {
+  c("varY" = "atop('Precision', '['*log[10](italic(V[bar(Y)]))*']')", 
+    "repAvg" = "atop('Repeatability', '(within-location '*italic(rho[G])*')')", 
+    "reprAvg" = "atop('Representativeness', '('*italic(rho[G])*')')")[x] }
 
 # Function to rename traits
 f_trait_rename <- function(x) str_replace(str_add_space(x), "Protein Total", "Protein/Total")
