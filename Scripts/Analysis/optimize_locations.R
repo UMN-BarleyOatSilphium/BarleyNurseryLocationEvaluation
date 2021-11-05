@@ -263,117 +263,129 @@ optimized_locations_example <- location_opimization_input %>%
            tibble(comp_weight_group = names(comp_weights), comp_weights), scale_components = c(TRUE, FALSE)) %>%
   filter(loc_penalty == 0.01, comp_weight_group == "equal", trait_weight_group == "equal", scale_components) %>%
   group_by(nursery, management, loc_penalty, comp_weight_group, trait_weight_group, scale_components) %>% 
-  do({
-    df <- .
+  nest() %>%
+  ungroup() %>%
+  mutate(out = list(NULL))
 
-    # Location penalty
-    pen <- df$loc_penalty[[1]]
-    # Fitness component weights
-    comp_weight <- df$comp_weights[[1]]
-    # List of traits
-    tr_list <- df$trait
-    # Trait weights
-    tr_weights <- df$trait_weights[[1]]
-    
-    # Extract lists of matrices
-    GL <- df$GL
-    RL <- df$RL
-    corL <- df$repeatability
-    repL <- df$representativeness2
-    
-    # Scale the matrices to 0-1
-    RL1 <- mapply(GL, RL, FUN = function(.x, .y) scale2(x = list(.x, .y), range = "01"), SIMPLIFY = FALSE)
-    GL1 <- lapply(RL1, "[[", 1)
-    RL1 <- lapply(RL1, "[[", 2)
-    # Scale everything to 0-1
-    corL1 <- lapply(X = corL, FUN = scale2, range = "01")
-    repL1 <- lapply(X = repL, FUN = scale2, range = "01")
-    
-    # Vector of unique agronomic trait / maltq trait locations
-    agro_locs <- reduce(map(GL[df$trait %in% agro_traits], rownames), union)
-    core_agro_locs <- reduce(map(GL[df$trait %in% agro_traits], rownames), intersect)
-    maltq_locs <- intersect(agro_locs, reduce(map(GL[df$trait %in% quality_traits], rownames), union))
-    core_maltq_locs <- intersect(agro_locs, reduce(map(GL[df$trait %in% quality_traits], rownames), intersect))
-    
-    # Vector of all possible locations
-    all_locations <-  sort(union(agro_locs, maltq_locs))
-    # Max values of the decision variable for each location (depends on whether malt quality data was collected)
-    loc_values <- setNames(object = ifelse(all_locations %in% maltq_locs, 2, 1), nm = all_locations)
-    # List of core locations - at least one from each vector must be non-zero
-    non_zero_loc_list <- list(core_agro_locs = core_agro_locs, core_maltq_locs = core_maltq_locs)
-    
-    
-    # Implement the genetic algorithm
-    # Adjust the varY scaling
-    varYscaling <- 1
-    # Empty list to store the best population at each generation
-    best_pop_gen <- list()
-    
-    # Monitor function
-    monitor <- function(optim) {
-      best_pop_gen <- append(best_pop_gen, values = list(optim$best$genome))
-      assign(x = "best_pop_gen", value = best_pop_gen, envir = .GlobalEnv)
-    }
-    
-    
-    optim_out <- GeneticAlg.int(genomeLen = length(all_locations), genomeMin = rep(0, length(loc_values)), genomeMax = loc_values, 
-                                popSize = 100, iterations = 250, verbose = FALSE, mutationChance = 0.8, 
-                                evalFunc = function(x) -fitness_int(x = x, locs = all_locations, traits = tr_list, G.list = GL1,
-                                                                    R.list = RL1, P.list = corL1, M.list = repL1, varY.scaling = varYscaling,
-                                                                    component.weights = comp_weight, trait.weights = tr_weights,
-                                                                    non.zero.env.list = non_zero_loc_list, env.penalty = pen), 
-                                monitorFunc = monitor) 
-                                
-    
-    # Determine the selected locations for each of the best genomes
-    selected_locations_gen <- map(best_pop_gen, ~{
-      list(agro_optim_loc = all_locations[.x != 0],
-           maltq_optim_locs = all_locations[.x == 2])
-    }) %>% 
-      # Convert to df
-      transpose() %>%
-      as_tibble() %>%
-      mutate(iter = seq_len(nrow(.)))
-    
-    # Calculate the fitness components
-    
-    # Calculate scaled fitness and unscaled fitness
-    fit_out <- map(best_pop_gen, ~{
-      fitness_int(x = .x, locs = all_locations, traits = tr_list, G.list = GL, R.list = RL, 
-                  P.list = corL, M.list = repL, return.all = TRUE) %>%
-        as.data.frame() %>%
-        rownames_to_column("trait")
-    })
-    
-    fit_out_scaled <- map(best_pop_gen, ~{
-      fitness_int(x = .x, locs = all_locations, traits = tr_list, G.list = GL1, R.list = RL1, 
-                  P.list = corL1, M.list = repL1, return.all = TRUE) %>%
-        as.data.frame() %>%
-        rownames_to_column("trait")
-    })
-    
-    # Scale and average the fitness components
-    fit_out_summarize <- fit_out %>%
-      map(~{
-        mutate(.x, varY = 1 - (varY / df$varY_scaling)) %>% 
-          summarize_at(vars(-trait), weighted.mean, w = tr_weights, na.rm = TRUE)
-      }) %>%
-      imap_dfr(~mutate(.x, iter = .y))
-    
-    # Summarize 
-    fit_out_scaled_summarize <- fit_out_scaled %>%
-      map(~{
-        mutate(.x, varY = 1 - (varY / df$varY_scaling)) %>% 
-          summarize_at(vars(-trait), weighted.mean, w = tr_weights, na.rm = TRUE)
-      }) %>%
-      imap_dfr(~mutate(.x, iter = .y))
-    
-    # Create a tibble that summarizes the optimization results
-    optim_results <- tibble(method = "optimization", fitness = list(fit_out), fitness_scaled = list(fit_out_scaled), 
-                            fitness_summarize = list(fit_out_summarize), fitness_scaled_summarize = list(fit_out_scaled_summarize),
-                            selected_locations_gen = list(selected_locations_gen))
-    
-  }) %>% ungroup()
+# Iterate over rows
+for (i in seq_len(nrow(optimized_locations_example))) {
+  df <- optimized_locations_example$data[[i]]
+  
+  # Location penalty
+  pen <- optimized_locations_example$loc_penalty[[i]]
+  # Fitness component weights
+  comp_weight <- df$comp_weights[[1]]
+  # List of traits
+  tr_list <- df$trait
+  # Trait weights
+  tr_weights <- df$trait_weights[[1]]
+  
+  # Extract lists of matrices
+  GL <- df$GL
+  RL <- df$RL
+  corL <- df$repeatability
+  repL <- df$representativeness2
+  
+  # Scale the matrices to 0-1
+  RL1 <- mapply(GL, RL, FUN = function(.x, .y) scale2(x = list(.x, .y), range = "01"), SIMPLIFY = FALSE)
+  GL1 <- lapply(RL1, "[[", 1)
+  RL1 <- lapply(RL1, "[[", 2)
+  # Scale everything to 0-1
+  corL1 <- lapply(X = corL, FUN = scale2, range = "01")
+  repL1 <- lapply(X = repL, FUN = scale2, range = "01")
+  
+  # Vector of unique agronomic trait / maltq trait locations
+  agro_locs <- reduce(map(GL[df$trait %in% agro_traits], rownames), union)
+  core_agro_locs <- reduce(map(GL[df$trait %in% agro_traits], rownames), intersect)
+  maltq_locs <- intersect(agro_locs, reduce(map(GL[df$trait %in% quality_traits], rownames), union))
+  core_maltq_locs <- intersect(agro_locs, reduce(map(GL[df$trait %in% quality_traits], rownames), intersect))
+  
+  # Vector of all possible locations
+  all_locations <-  sort(union(agro_locs, maltq_locs))
+  # Max values of the decision variable for each location (depends on whether malt quality data was collected)
+  loc_values <- setNames(object = ifelse(all_locations %in% maltq_locs, 2, 1), nm = all_locations)
+  # List of core locations - at least one from each vector must be non-zero
+  non_zero_loc_list <- list(core_agro_locs = core_agro_locs, core_maltq_locs = core_maltq_locs)
+  
+  
+  # Implement the genetic algorithm
+  # Adjust the varY scaling
+  varYscaling <- 1
+  # Empty list to store the best population at each generation
+  best_pop_gen <- list()
+  
+  # Monitor function
+  monitor <- function(optim) {
+    best_pop_gen <- append(best_pop_gen, values = list(optim$best$genome))
+    assign(x = "best_pop_gen", value = best_pop_gen, envir = .GlobalEnv)
+  }
+  
+  
+  optim_out <- GeneticAlg.int(genomeLen = length(all_locations), genomeMin = rep(0, length(loc_values)), genomeMax = loc_values, 
+                              popSize = 100, iterations = 250, verbose = FALSE, mutationChance = 0.8, 
+                              monitorFunc = monitor,
+                              evalFunc = function(x) -fitness_int(x = x, locs = all_locations, traits = tr_list, G.list = GL1,
+                                                                  R.list = RL1, P.list = corL1, M.list = repL1, varY.scaling = varYscaling,
+                                                                  component.weights = comp_weight, trait.weights = tr_weights,
+                                                                  non.zero.env.list = non_zero_loc_list, env.penalty = pen)) 
+  
+  
+  # Determine the selected locations for each of the best genomes
+  selected_locations_gen <- map(best_pop_gen, ~{
+    list(agro_optim_loc = all_locations[.x != 0],
+         maltq_optim_locs = all_locations[.x == 2])
+  }) %>% 
+    # Convert to df
+    transpose() %>%
+    as_tibble() %>%
+    mutate(iter = seq_len(nrow(.)))
+  
+  # Calculate the fitness components
+  
+  # Calculate scaled fitness and unscaled fitness
+  fit_out <- map(best_pop_gen, ~{
+    fitness_int(x = .x, locs = all_locations, traits = tr_list, G.list = GL, R.list = RL, 
+                P.list = corL, M.list = repL, return.all = TRUE) %>%
+      as.data.frame() %>%
+      rownames_to_column("trait")
+  })
+  
+  fit_out_scaled <- map(best_pop_gen, ~{
+    fitness_int(x = .x, locs = all_locations, traits = tr_list, G.list = GL1, R.list = RL1, 
+                P.list = corL1, M.list = repL1, return.all = TRUE) %>%
+      as.data.frame() %>%
+      rownames_to_column("trait")
+  })
+  
+  # Scale and average the fitness components
+  fit_out_summarize <- fit_out %>%
+    map(~{
+      mutate(.x, varY = 1 - (varY / df$varY_scaling)) %>% 
+        summarize_at(vars(-trait), weighted.mean, w = tr_weights, na.rm = TRUE)
+    }) %>%
+    imap_dfr(~mutate(.x, iter = .y))
+  
+  # Summarize 
+  fit_out_scaled_summarize <- fit_out_scaled %>%
+    map(~{
+      mutate(.x, varY = 1 - (varY / df$varY_scaling)) %>% 
+        summarize_at(vars(-trait), weighted.mean, w = tr_weights, na.rm = TRUE)
+    }) %>%
+    imap_dfr(~mutate(.x, iter = .y))
+  
+  # Create a tibble that summarizes the optimization results
+  optimized_locations_example$out[[i]] <- tibble(
+    method = "optimization", fitness = list(fit_out), fitness_scaled = list(fit_out_scaled), 
+    fitness_summarize = list(fit_out_summarize), fitness_scaled_summarize = list(fit_out_scaled_summarize),
+    selected_locations_gen = list(selected_locations_gen)
+  )
+  
+}
+
+# Remove data, return the results
+optimized_locations_example <- optimized_locations_example %>%
+  select(-data) %>%
+  unnest(out)
 
 
 # Save everything
