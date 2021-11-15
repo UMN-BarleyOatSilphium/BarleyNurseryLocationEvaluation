@@ -11,3 +11,6 @@ Figures/*
 Results/*
 .Rproj.user/*
 Scripts/presentation_figures.R
+Scripts/analyze_pedigree_relationships.R
+Scripts/data_exploration.R
+Scripts/stability_analysis.R
